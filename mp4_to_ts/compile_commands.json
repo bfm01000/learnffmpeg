@@ -1,7 +1,0 @@
-[
-  {
-    "directory": "/Users/tommyshelby/workSpace/learn/mp4_to_ts/code",
-    "command": "clang++ -std=c++17 -I/opt/homebrew/include -I/opt/homebrew/Cellar/ffmpeg/8.0.1/include -c /Users/tommyshelby/workSpace/learn/mp4_to_ts/code/main.cpp -o /Users/tommyshelby/workSpace/learn/mp4_to_ts/code/main.o",
-    "file": "/Users/tommyshelby/workSpace/learn/mp4_to_ts/code/main.cpp"
-  }
-]

@@ -1,6 +1,0 @@
-CompileFlags:
-  CompilationDatabase: .
-  Add:
-    - -std=c++17
-    - -I/opt/homebrew/include
-    - -I/opt/homebrew/Cellar/ffmpeg/8.0.1/include
