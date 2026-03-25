@@ -301,9 +301,13 @@ static int open_video_encoder(const Options &opt, AVFormatContext *ifmt_ctx,
   sc.enc_ctx->gop_size = 50;
   sc.enc_ctx->max_b_frames = 2;
 
+  // 设置编码器的 preset (预设) 参数，用于平衡编码速度和压缩率（如 ultrafast, medium, slow 等）。越慢压缩率越高。
   av_opt_set(sc.enc_ctx->priv_data, "preset", opt.preset.c_str(), 0);
+  // 设置 CRF (Constant Rate Factor，恒定质量因子)，用于控制输出视频的画质。数值越小画质越好，文件越大（x264 默认 23，推荐范围 18-28）。
   av_opt_set_int(sc.enc_ctx->priv_data, "crf", opt.crf, 0);
 
+  // 如果输出封装格式（如 MP4、FLV）要求全局头信息（即 SPS/PPS 等配置信息放在文件头部，而不是每个关键帧前面），
+  // 则告诉编码器生成全局头信息。
   if (ofmt_ctx->oformat->flags & AVFMT_GLOBALHEADER) {
     sc.enc_ctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
   }
@@ -350,6 +354,8 @@ static int open_audio_encoder(const Options &opt, AVFormatContext *ofmt_ctx, Str
   sc.enc_ctx->bit_rate = parse_bitrate(opt.audio_bitrate);
   sc.enc_ctx->time_base = AVRational{1, sc.enc_ctx->sample_rate};
 
+  // 如果输出封装格式（如 MP4、FLV）要求全局头信息（即 SPS/PPS 等配置信息放在文件头部，而不是每个关键帧前面），
+  // 则告诉编码器生成全局头信息。
   if (ofmt_ctx->oformat->flags & AVFMT_GLOBALHEADER) {
     sc.enc_ctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
   }
