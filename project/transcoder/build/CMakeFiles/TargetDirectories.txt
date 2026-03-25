@@ -1,3 +1,0 @@
-/Users/tommyshelby/workSpace/learn/project/transcoder/build/CMakeFiles/rebuild_cache.dir
-/Users/tommyshelby/workSpace/learn/project/transcoder/build/CMakeFiles/edit_cache.dir
-/Users/tommyshelby/workSpace/learn/project/transcoder/build/CMakeFiles/transcoder.dir
