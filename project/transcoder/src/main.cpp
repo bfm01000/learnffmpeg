@@ -843,13 +843,19 @@ int main(int argc, char **argv) {
   if (!parse_args(argc, argv, opt)) {
     return EXIT_ARG_ERROR;
   }
-
+  // 容器上下文
   AVFormatContext *ifmt_ctx = nullptr;
   AVFormatContext *ofmt_ctx = nullptr;
+  
+  // 存放复用器(Muxer)配置参数的字典，例如 mp4 的 movflags=faststart。
+  // 初始化为 nullptr，后续调用 av_dict_set 时 FFmpeg 会自动分配内存。
   AVDictionary *mux_opts = nullptr;
+  
   std::vector<StreamContext> streams;
+
   std::unordered_map<int, int> in_to_ctx;
   std::unordered_map<int, int> in_to_out;
+  
   int64_t input_duration_us = AV_NOPTS_VALUE;
   int exit_code = EXIT_OK;
 
