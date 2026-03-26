@@ -24,3 +24,4 @@
 *.wma
 build/
 .cache/
+.vscode
