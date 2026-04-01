@@ -1,5 +1,45 @@
 # SwsContext 讲义
 
+## 补充：SwsContext 与硬件解码 (GPU) 数据
+
+**核心结论：是的，`SwsContext` 只能处理 CPU 内存（Host Memory）中的数据。如果你的帧数据是通过硬件解码（如 NVDEC、QSV、VideoToolbox）得到的，且数据还驻留在 GPU 显存（Device Memory）中，你不能直接将它传给 `sws_scale`。**
+
+### 为什么不能直接用？
+
+`sws_scale` 是一个纯 CPU 实现的软件图像处理函数。它在执行时，需要通过 CPU 的指令（如 x86 的 AVX/SSE，或 ARM 的 NEON）去逐字节读取 `AVFrame->data` 指向的内存地址。
+* **软件解码得到的 AVFrame**：`data` 指针指向的是普通的系统内存（RAM），CPU 可以飞快地读写。
+* **硬件解码得到的 AVFrame**：`data` 指针通常指向的是一个**硬件表面的句柄**（Hardware Surface Handle），或者是一个映射到 GPU 显存的特殊地址。如果 CPU 强行去读写这个地址，要么会触发段错误（Segmentation Fault）直接崩溃，要么会导致极其缓慢的 PCIe 总线回读（Bus Readback），性能惨不忍睹。
+
+### 如何处理硬件解码的帧？
+
+如果你使用了硬件解码，想要进行像素格式转换或缩放，通常有以下两种方案：
+
+#### 方案一：先将数据从 GPU 拷回 CPU（Hardware Download）
+这是最简单但性能有损耗的方法。你需要先调用 FFmpeg 的硬件传输 API，把显存里的图像“下载”到系统内存中，然后再交给 `sws_scale` 处理。
+
+```cpp
+// 假设 hw_frame 是硬件解码出来的帧，格式通常是 AV_PIX_FMT_NV12 或特定的硬件格式（如 AV_PIX_FMT_CUDA）
+AVFrame* sw_frame = av_frame_alloc();
+// 将硬件帧的数据下载到软件帧（CPU内存）
+int ret = av_hwframe_transfer_data(sw_frame, hw_frame, 0);
+if (ret >= 0) {
+    // 此时 sw_frame 里的数据已经在 CPU 内存中了，通常是 NV12 格式
+    // 接下来你就可以安全地把 sw_frame 交给 sws_scale 去转成 RGB 或做缩放了
+    sws_scale(sws_ctx, sw_frame->data, sw_frame->linesize, ...);
+}
+```
+
+#### 方案二：全程在 GPU 上处理（推荐，性能最高）
+既然数据已经在 GPU 上了，最合理的做法是让 GPU 顺便把格式转换和缩放也做了，完全不占用 CPU 资源。FFmpeg 提供了强大的硬件滤镜（Hardware Filters）来实现这一点。
+
+例如，使用 `scale_cuda`（NVIDIA）或 `scale_qsv`（Intel）滤镜：
+1. 解码器输出位于 GPU 的硬件帧。
+2. 将硬件帧送入 FFmpeg 的 `AVFilterGraph`。
+3. 在滤镜图中配置硬件缩放/转换滤镜（如将 NV12 转为 RGB）。
+4. （可选）如果最终需要保存为文件，再在滤镜图的最后，或者手动使用 `av_hwframe_transfer_data` 将处理好的 RGB 数据拷回 CPU。
+
+**总结**：`SwsContext` 是纯软件的“老黄牛”，它只认得 CPU 内存。面对 GPU 里的“高科技”数据，要么你把它搬回 CPU 给老黄牛处理，要么你直接在 GPU 里用“高科技”流水线（硬件滤镜）一次性搞定。
+
 这是一篇面向初学者到进阶学习者的 `SwsContext` 讲义。  
 你可以把它和你当前的 `project/2_video_2_image/main.cpp` 一起看，因为你现在做的“视频抽帧保存成 PPM/JPEG”正好就是 `SwsContext` 最典型的使用场景。
 

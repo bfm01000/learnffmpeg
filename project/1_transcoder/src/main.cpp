@@ -49,7 +49,12 @@ struct StreamContext {
   AVCodecContext *dec_ctx = nullptr;       // 解码器上下文：把压缩 packet 解成原始 frame
   AVCodecContext *enc_ctx = nullptr;       // 编码器上下文：把原始 frame 编回目标编码 packet
 
+  // SwsContext 名字来源：SoftWare Scale (软件缩放/图像处理库)。
+  // 它是 FFmpeg 中 libswscale 库的核心结构体，专门用于【视频/图像】的缩放、像素格式转换（如 RGB 转 YUV）和色彩空间转换。
   SwsContext *sws_ctx = nullptr;           // 视频像素格式/尺寸转换上下文（例如转为 yuv420p）
+  
+  // SwrContext 名字来源：SoftWare Resample (软件重采样/音频处理库)。
+  // 它是 FFmpeg 中 libswresample 库的核心结构体，专门用于【音频】的重采样（如 48kHz 转 44.1kHz）、采样格式转换（如 f32 转 s16）和声道布局转换（如 5.1 转立体声）。
   SwrContext *swr_ctx = nullptr;           // 音频重采样上下文（采样率/采样格式/声道布局转换）
   AVAudioFifo *audio_fifo = nullptr;       // 音频 FIFO 缓冲：平滑“解码帧大小”和“编码器帧大小”的差异
 
@@ -447,6 +452,15 @@ static int encode_video_frame(StreamContext &sc, AVFrame *decoded, AVFormatConte
   frame->width = sc.enc_ctx->width;
   frame->height = sc.enc_ctx->height;
 
+  // av_frame_get_buffer 作用：为音视频帧分配实际的数据内存（Data Buffer）。
+  // 详细机制：
+  // 1. 分配前提：在调用它之前，必须先告诉它你要多大的房子。所以上面必须先设置好帧的“元数据”（视频的 format、width、height）。
+  // 2. 核心动作：av_frame_alloc() 只是创建了一个“空壳子”（AVFrame 结构体），并没有分配存放几百万个像素点的巨大内存。
+  //    av_frame_get_buffer 会根据宽高和像素格式（如 YUV420P），计算出需要的总字节数，真正去申请这块内存，
+  //    并把内存地址正确地挂载到 frame->data 数组中，同时计算好每行的跨度（frame->linesize）。
+  // 3. 参数 0 的含义（内存对齐）：第二个参数代表内存对齐（Alignment）。传 0 表示让 FFmpeg 自动使用默认的最优对齐方式（通常是 32 或 64 字节对齐）。
+  //    【为什么需要对齐？】因为底层的音视频处理（如 Swscale 缩放、H.264 编码）大量使用了 CPU 的 SIMD 硬件加速指令集（如 SSE/AVX）。
+  //    这些高级指令要求数据必须严格存放在特定的内存边界上，否则程序会直接崩溃或极度掉速。
   int ret = av_frame_get_buffer(frame, 0);
   if (ret < 0) {
     av_frame_free(&frame);
@@ -471,6 +485,22 @@ static int encode_video_frame(StreamContext &sc, AVFrame *decoded, AVFormatConte
     return AVERROR(EINVAL);
   }
 
+  // sws_scale 作用：执行真正的视频帧图像转换（包括分辨率缩放 + 像素格式转换）。
+  // 详细机制与参数解析：
+  // 1. sc.sws_ctx：转换上下文，里面已经配置好了源和目标的宽高、像素格式以及使用的缩放算法（如 SWS_BILINEAR）。
+  // 2. decoded->data / linesize：【输入源】解码出来的原始图像数据指针数组，以及每个平面的行跨度（步长）。
+  // 3. 0：从输入图像的第 0 行（最顶端）开始处理（srcSliceY）。
+  // 4. sc.dec_ctx->height：总共要处理多少行（srcSliceH）。
+  //    【为什么只传 height 不传 width？】
+  //    因为 width 信息已经在之前创建 sc.sws_ctx 时（sws_getCachedContext）固定写死了。
+  //    sws_scale 设计为支持“分片（Slice）处理”以节省内存或多线程加速。
+  //    分片只能是横向切分（按行切），不能纵向切分，所以每次调用只需要告诉它“这次处理从第几行开始，一共处理多少行”即可。
+  //    这里传 0 和 height，表示不分片，一次性处理整张图。
+  // 5. frame->data / linesize：【输出目标】转换后的数据要写到哪里去，即我们之前用 av_frame_get_buffer 分配好内存的目标帧。
+  // 
+  // 【为什么需要这步？】
+  // 解码器吐出的原始帧（decoded）可能是 1080p、NV12 格式；而我们的编码器（enc_ctx）可能被配置为要求 720p、YUV420P 格式。
+  // sws_scale 就负责把原始画面“重绘”成编码器严格要求的样子，然后填入目标 frame 中。
   sws_scale(sc.sws_ctx,
             decoded->data,
             decoded->linesize,
@@ -672,10 +702,29 @@ static int copy_mode_run(AVFormatContext *ifmt_ctx, AVFormatContext *ofmt_ctx,
     maybe_print_progress("Copy progress:", packet_pts_to_us(pkt, in_stream), input_duration_us, last_progress_us);
 
     // 直拷贝模式下仅做时间戳换算和重封装，不做解码/编码。
+    // 1. 转换时间戳（PTS/DTS）的时间基（Time Base），保证音视频在新的文件中播放速度和音画同步是正常的
+    // 注：out_stream->time_base 是在调用 avformat_write_header() 时，由 FFmpeg 的封装器（Muxer）自动确定并分配的。
+    // 分配规则因输出容器格式（如 MP4, FLV, TS）而异：
+    // - FLV：固定分配为 1/1000（毫秒精度）。
+    // - MPEG-TS：固定分配为 1/90000。
+    // - MP4/MOV：通常会根据视频帧率或音频采样率计算出一个合适的高精度时间基（例如 1/12800 或 1/90000）。
     av_packet_rescale_ts(pkt, in_stream->time_base, out_stream->time_base);
+    // 2. 更新数据包所属的流索引，告诉封装器该写到哪个轨道
     pkt->stream_index = out_index;
+    // 3. 重置数据包在输入文件中的物理字节偏移量，避免误导输出封装器
     pkt->pos = -1;
 
+    // 4. 将数据包按时间顺序交织（音频和视频交替）写入输出文件
+    // av_interleaved_write_frame 内部机制非常复杂，它不仅仅是一个“Write”函数，更是一个“路由器+排序器+调度器”：
+    // - 内部缓存 (Buffering)：通常不会立刻把数据写到磁盘上，而是先把它存放到 FFmpeg 内部的一个缓存队列中。
+    // - 按时间戳排序 (Sorting by DTS)：检查缓存队列中所有数据包的解码时间戳（DTS）。因为输入包的时间线可能不是严格递增的，它会负责把这些包重新按时间先后顺序排好。
+    // - 交织打包 (Interleaving) - 核心动作：把不同轨道（视频流、音频流）的数据包，按照时间顺序“像拉链一样”交错排列在一起。
+    //   【为什么必须交织？】如果不交织，文件前半部分全是视频，后半部分全是音频。播放器为了同时播放音视频，必须跳到文件末尾去读音频，导致：
+    //   1. 本地播放：磁盘磁头疯狂来回寻址（Seek），极其卡顿。
+    //   2. 网络播放：根本无法边下边播，必须把整个文件下载完才能播放。
+    //   3. 内存爆炸：如果不想来回寻址，就得把前半部分的所有视频都缓存在内存里等音频。
+    //   交织之后，物理文件上相邻的数据块，在播放时间上也是相邻的，顺着读就能流畅播放。
+    // - 真正写入底层 IO (Flushing)：当内部缓存收集了足够多的包，能够绝对确定谁的时间戳最靠前时，就会把最老的那个包剥离出来，真正调用底层的 IO 接口（如 avio_write）写入输出文件。
     ret = av_interleaved_write_frame(ofmt_ctx, pkt);
     av_packet_unref(pkt);
     if (ret < 0) {
@@ -711,6 +760,16 @@ static int transcode_mode_run(AVFormatContext *ifmt_ctx, AVFormatContext *ofmt_c
       av_packet_unref(pkt);
       continue;
     }
+
+    // packet_pts_to_us 作用：将数据包的显示时间戳（PTS）转换为绝对的微秒数（Microseconds）。
+    // 详细机制：
+    // 1. PTS 只是一个相对刻度：在 FFmpeg 中，pkt->pts 只是一个整数（比如 90000），它本身不代表具体的秒数。
+    //    必须结合该流的时间基 stream->time_base（比如 1/90000 秒）才能算出真实时间（90000 * 1/90000 = 1秒）。
+    // 2. 统一时间单位：视频流和音频流的时间基往往不同。为了统一计算转码进度，必须把它们都转换成一个统一的标准时间单位。
+    // 3. 内部实现：它调用了 av_rescale_q(pts, stream->time_base, AV_TIME_BASE_Q)。
+    //    - AV_TIME_BASE_Q 是 FFmpeg 定义的标准微秒时间基（1/1000000）。
+    //    - av_rescale_q 是一个安全的数学函数，用于在不同时间基之间按比例缩放时间戳，能有效防止直接乘除导致的整数溢出。
+    // 最终，这里获取到当前包的绝对微秒时间，传给 maybe_print_progress，用于和总时长对比，打印出当前的转码进度（如 50%）。
 
     maybe_print_progress("Transcode progress:", packet_pts_to_us(pkt, ifmt_ctx->streams[pkt->stream_index]),
                          input_duration_us, last_progress_us);
@@ -991,8 +1050,11 @@ int main(int argc, char **argv) {
     }
   }
 
+  // 将 MP4/MOV 封装选项 "movflags" 设置为 "+faststart"
+  // 默认情况下，MP4 文件的 moov atom（包含视频元数据如索引、时长等）写在文件末尾。
+  // 加上 +faststart 后，FFmpeg 会在封装结束时进行二次处理，把 moov 移动到文件头部。
+  // 这对于网络流媒体播放至关重要，因为播放器需要先读取 moov 才能开始播放，放在头部可以实现边下边播（提升首开速度）。
   av_dict_set(&mux_opts, "movflags", "+faststart", 0);
-  // +faststart 会把 moov 提前，提升网络场景首开速度。
   ret = avformat_write_header(ofmt_ctx, &mux_opts);
   av_dict_free(&mux_opts);
   if (ret < 0) {
