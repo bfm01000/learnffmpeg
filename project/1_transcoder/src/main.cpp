@@ -39,8 +39,15 @@ struct Options {
   std::string audio_lang;           // 按语言标签选音轨（如 eng/chi），未命中则回退第一路音频
 };
 
-// 每一路参与处理的流（最多视频一路 + 音频一路）都对应一个上下文。
-// 这里集中保存该流的解码器、编码器和中间状态（如下一帧 pts）。
+// 每一路参与处理的流（最多视频一路 + 音频一路）都对应一个 StreamContext。
+// 你可以把它理解成“程序内部对某一路流的总控对象”：
+// - 上游它知道自己对应输入文件里的哪一路流（input_index）
+// - 中间它持有这一路流需要的解码器/编码器/转换器
+// - 下游它知道自己最终要写到输出文件里的哪一路流（output_index）
+//
+// 这样设计的好处是：主循环读到一个输入 packet 后，只要先找到它对应的 StreamContext，
+// 后续就能顺着这个对象完成“解码 -> 格式转换 -> 编码 -> 写输出”的整条链路，
+// 避免把 video_dec_ctx / audio_dec_ctx / video_enc_ctx / audio_enc_ctx 等状态分散在一堆全局变量里。
 struct StreamContext {
   AVMediaType type = AVMEDIA_TYPE_UNKNOWN; // 流类型：视频流或音频流（决定后续走哪条处理逻辑）
   int input_index = -1;                    // 输入容器中的流索引（来自 ifmt_ctx->streams[]）
@@ -912,7 +919,24 @@ int main(int argc, char **argv) {
   
   std::vector<StreamContext> streams;
 
+  // 输入流索引 -> StreamContext 下标
+  // 用途：转码模式下，主循环 av_read_frame 读到一个输入 packet 后，
+  // 先通过 pkt.stream_index 找到它属于 streams 里的哪一个 StreamContext，
+  // 然后才能拿到对应的 dec_ctx / enc_ctx / sws_ctx / swr_ctx 等状态继续处理。
+  // 例子：
+  //   输入文件的视频流索引可能是 0，音频流索引可能是 2；
+  //   但程序内部只挑了两路流参与处理，于是可能建立：
+  //     in_to_ctx[0] = 0   // 输入视频流 0 -> streams[0]
+  //     in_to_ctx[2] = 1   // 输入音频流 2 -> streams[1]
   std::unordered_map<int, int> in_to_ctx;
+  // 输入流索引 -> 输出流索引
+  // 用途：copy/remux 模式下不经过解码器和编码器，读到输入 packet 后，
+  // 需要立刻知道它最终该写到输出文件的哪一路流里。
+  // 例子：
+  //   输入视频流是 0、音频流是 2；
+  //   输出文件中它们可能变成输出流 0 和 1，于是：
+  //     in_to_out[0] = 0
+  //     in_to_out[2] = 1
   std::unordered_map<int, int> in_to_out;
   
   int64_t input_duration_us = AV_NOPTS_VALUE;
@@ -940,8 +964,13 @@ int main(int argc, char **argv) {
     return EXIT_STREAM_SELECT_ERROR;
   }
 
+  // 为输出文件创建封装上下文（AVFormatContext）。
+  // FFmpeg 会根据输出路径的后缀（例如 .mp4 / .flv / .ts）自动推断要使用哪种 muxer，
+  // 并把创建好的输出上下文写到 ofmt_ctx，后续新建输出流、写文件头、写包都依赖它。
   ret = avformat_alloc_output_context2(&ofmt_ctx, nullptr, nullptr, opt.output_path.c_str());
   if (ret < 0 || !ofmt_ctx) {
+    // 如果输出上下文创建失败，说明输出容器还没法正常建立，
+    // 后续的输出流创建和写 header 都无法继续，因此记录错误、关闭已打开的输入文件并返回。
     log_msg(LogLevel::kError, "avformat_alloc_output_context2 failed.");
     avformat_close_input(&ifmt_ctx);
     return EXIT_OUTPUT_CREATE_ERROR;
