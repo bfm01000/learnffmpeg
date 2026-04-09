@@ -516,8 +516,10 @@ static int encode_video_frame(StreamContext &sc, AVFrame *decoded, AVFormatConte
             frame->data,
             frame->linesize);
 
+  // 优先用 FFmpeg 为解码帧推断出的“最可靠时间戳”。
   int64_t src_pts = decoded->best_effort_timestamp;
   if (src_pts == AV_NOPTS_VALUE) {
+    // 如果没有可用的 best_effort_timestamp，再退回原始 pts。
     src_pts = decoded->pts;
   }
   if (src_pts != AV_NOPTS_VALUE) {
