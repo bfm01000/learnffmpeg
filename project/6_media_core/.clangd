@@ -1,0 +1,8 @@
+CompileFlags:
+  Compiler: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/c++
+  BuiltinHeaders: QueryDriver
+  CompilationDatabase: build
+  Add:
+    - -Iinclude
+    - -I/opt/homebrew/Cellar/ffmpeg/8.0.1/include
+    - -std=c++14

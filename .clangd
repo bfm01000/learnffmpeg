@@ -1,0 +1,10 @@
+If:
+  PathMatch: ^project/6_media_core/.*$
+CompileFlags:
+  Compiler: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/c++
+  BuiltinHeaders: QueryDriver
+  CompilationDatabase: /Users/tommyshelby/workSpace/learn/project/6_media_core/build
+  Add:
+    - -I/Users/tommyshelby/workSpace/learn/project/6_media_core/include
+    - -I/opt/homebrew/Cellar/ffmpeg/8.0.1/include
+    - -std=c++14

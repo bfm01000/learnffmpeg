@@ -1,16 +1,16 @@
-#include "libavcodec/codec.h"
-#include "libavcodec/codec_id.h"
-#include "libavcodec/packet.h"
-#include "libavutil/pixfmt.h"
-#include "libavutil/rational.h"
 #include <cstddef>
 #include <iostream>
 #include <string>
 
 extern "C" {
+    #include <libavcodec/codec.h>
+    #include <libavcodec/packet.h>
     #include <libavformat/avformat.h>
     #include <libavcodec/avcodec.h>
     #include <libavutil/avutil.h>
+    #include <libavutil/frame.h>
+    #include <libavutil/pixfmt.h>
+    #include <libavutil/rational.h>
     #include <libswscale/swscale.h>
 }
 
@@ -18,11 +18,11 @@ struct InputOptions {
     std::string input_path;
     std::string output_path;
 
-    int in_video_index;
-    int in_audio_index;
+    int in_video_index = -1;
+    int in_audio_index = -1;
 
-    int out_video_index;
-    int out_audio_index;
+    int out_video_index = -1;
+    int out_audio_index = -1;
 
     // 如果为-1，则保留原始宽高
     int target_width = -1;
@@ -66,26 +66,27 @@ InputOptions input_options;
 
 int main(int argc, char **argv) {
     // 1. 解析参数
-    input_options.input_path = "../../../source/cat.mp4";
-    input_options.output_path = "../../../source/cat_output.mp4";
+    input_options.input_path = "../../../../source/video_export_12-12-09.mp4";
+    input_options.output_path = "../../../../source/output_new.mp4";
 
     int64_t next_video_pts = 0;
-    int64_t next_audio_pts = 0;
 
     // 2. 打开AVFormatContext
     AVFormatContext * in_fmt_ctx = nullptr;
     AVFormatContext * out_fmt_ctx = nullptr;
 
     SwsContext *sws_ctx = nullptr;           // 视频像素格式/尺寸转换上下文（例如转为 yuv420p）
-    SwsContext *swr_ctx = nullptr;           // 音频重采样上下文（例如从 48kHz 转 44.1kHz）
 
+    AVPacket *flush_pkt = nullptr;
+
+    AVStream *out_video_stream = nullptr;
 
     int ret = 0;
 
     // 2.1 打开输入文件
     ret = avformat_open_input(&in_fmt_ctx, input_options.input_path.c_str(), nullptr, nullptr);
     if (ret < 0) {
-        std::cerr << "avformat_open_input failed: " << ff_err2str(ret) << std::endl;
+        std::cerr << "avformat_open_input failed: " << ff_err2str(ret) << input_options.input_path << std::endl;
         return -1;
     }
 
@@ -111,8 +112,8 @@ int main(int argc, char **argv) {
     std::cout << "input_options.in_video_index: " << input_options.in_video_index << std::endl;
     std::cout << "input_options.in_audio_index: " << input_options.in_audio_index << std::endl;
 
-    if (input_options.in_video_index == -1 || input_options.in_audio_index == -1) {
-        std::cerr << "no video or audio stream found" << std::endl;
+    if (input_options.in_video_index == -1) {
+        std::cerr << "no video stream found" << std::endl;
         return -1;
     }
 
@@ -130,23 +131,19 @@ int main(int argc, char **argv) {
 
     // 4. 初始化解码器
     AVCodecContext *in_video_dec_ctx = nullptr;
-    AVCodecContext *in_audio_dec_ctx = nullptr;
 
     const AVCodec* video_decoder = nullptr;
-    const AVCodec* audio_decoder = nullptr;
 
     // 4.0 查找解码器
     video_decoder = avcodec_find_decoder(in_fmt_ctx->streams[input_options.in_video_index]->codecpar->codec_id);
-    audio_decoder = avcodec_find_decoder(in_fmt_ctx->streams[input_options.in_audio_index]->codecpar->codec_id);
-    if (!video_decoder || !audio_decoder) {
-        std::cerr << "no video or audio decoder found" << std::endl;
+    if (!video_decoder) {
+        std::cerr << "no video decoder found" << std::endl;
         return -1;
     }
 
     // 4. 分配解码器上下文
     in_video_dec_ctx = avcodec_alloc_context3(video_decoder);
-    in_audio_dec_ctx = avcodec_alloc_context3(audio_decoder);
-    if (!in_video_dec_ctx || !in_audio_dec_ctx) {
+    if (!in_video_dec_ctx) {
         std::cerr << "failed to allocate codec context" << std::endl;
         return -1;
     }
@@ -157,31 +154,20 @@ int main(int argc, char **argv) {
         std::cerr << "failed to copy codec parameters to context" << std::endl;
         return -1;
     }
-    ret = avcodec_parameters_to_context(in_audio_dec_ctx, in_fmt_ctx->streams[input_options.in_audio_index]->codecpar);
-    if (ret < 0) {
-        std::cerr << "failed to copy codec parameters to context" << std::endl;
-        return -1;
-    }
-
     // 5. 打开解码器
     ret = avcodec_open2(in_video_dec_ctx, video_decoder, nullptr);
     if (ret < 0) {
         std::cerr << "failed to open video decoder" << std::endl;
         return -1;
     }
-    ret = avcodec_open2(in_audio_dec_ctx, audio_decoder, nullptr);
-    if (ret < 0) {
-        std::cerr << "failed to open audio decoder" << std::endl;
-        return -1;
-    }
-
     // 5. 初始化编码器
 
     const AVCodec* video_encoder = nullptr;
-    const AVCodec* audio_encoder = nullptr;
     
     AVCodecContext *out_video_enc_ctx = nullptr;
-    AVCodecContext *out_audio_enc_ctx = nullptr;
+
+    AVPacket *pkt = av_packet_alloc();
+    AVFrame *frame = av_frame_alloc();
     // const AVCodec *encoder = avcodec_find_encoder_by_name("libx264");
 
     // 5.1 视频编码器初始化
@@ -260,173 +246,244 @@ int main(int argc, char **argv) {
     out_video_enc_ctx->gop_size = 50;
     out_video_enc_ctx->max_b_frames = 2;
 
+    if (!(out_fmt_ctx->oformat->flags & AVFMT_NOFILE)) {
+        ret = avio_open(&out_fmt_ctx->pb, input_options.output_path.c_str(), AVIO_FLAG_WRITE);
+        if (ret < 0) {
+            std::cerr << "failed to open output file: " << ff_err2str(ret) << std::endl;
+            return -1;
+        }
+    }
+
+    if (out_fmt_ctx->oformat->flags & AVFMT_GLOBALHEADER) {
+        out_video_enc_ctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+    }
+
     ret = avcodec_open2(out_video_enc_ctx, video_encoder, nullptr);
     if (ret < 0) {
         std::cerr << "failed to open video encoder" << std::endl;
         return -1;
     }
-    
-    // 5.3 初始化音频编码器
-    
-    audio_encoder = avcodec_find_encoder(AV_CODEC_ID_AAC);
-    if (!audio_encoder) {
-        std::cerr << "no audio encoder found" << std::endl;
+
+    // 5.2.1 创建输出视频流
+    out_video_stream = avformat_new_stream(out_fmt_ctx, nullptr);
+    if (!out_video_stream) {
+        std::cerr << "failed to allocate video stream" << std::endl;
+        return -1;
+    }
+    input_options.out_video_index = out_video_stream->index;
+    out_video_stream->time_base = out_video_enc_ctx->time_base;
+    ret = avcodec_parameters_from_context(out_video_stream->codecpar, out_video_enc_ctx);
+    if (ret < 0) {
+        std::cerr << "failed to copy codec parameters to context" << std::endl;
+        return -1;
+    }
+    out_video_stream->codecpar->codec_tag = 0;
+
+    ret = avformat_write_header(out_fmt_ctx, nullptr);
+    if (ret < 0) {
+        std::cerr << "failed to write header" << std::endl;
         return -1;
     }
 
-    out_audio_enc_ctx = avcodec_alloc_context3(audio_encoder);
-    if (!out_audio_enc_ctx) {
-        std::cerr << "failed to allocate audio encoder context" << std::endl;
-        return -1;
-    }
 
-    // sample_rate 表示音频采样率，也就是“每秒采多少个采样点”。
-    // 这里优先沿用输入音频解码器的采样率；如果输入值异常，再退回一个兜底值。
-    out_audio_enc_ctx->sample_rate = in_audio_dec_ctx->sample_rate > 0 ? in_audio_dec_ctx->sample_rate : 4800;
+    auto encode_and_write_video_frame = [&](AVFrame *decoded_frame) -> int {
+        AVFrame *sw_frame = av_frame_alloc();
+        if (!sw_frame) {
+            std::cerr << "failed to allocate sw frame" << std::endl;
+            return AVERROR(ENOMEM);
+        }
+        sw_frame->format = AV_PIX_FMT_YUV420P;
+        sw_frame->width = out_video_enc_ctx->width;
+        sw_frame->height = out_video_enc_ctx->height;
 
-    // sample_fmt 表示音频采样格式。
-    // AV_SAMPLE_FMT_FLTP 可以拆成两部分理解：
-    // - FLT : 每个采样点使用 32 位 float
-    // - P   : planar，平面存储
-    // 例如双声道时，左声道数据放一块，右声道数据放一块，而不是 LRLR 交错存储。
-    // 这里的含义是：告诉输出音频编码器，后面送给它的 PCM 数据将按 FLTP 格式组织。
-    out_audio_enc_ctx->sample_fmt = AV_SAMPLE_FMT_FLTP;
-
-    // ch_layout 表示声道布局，不只是“有几个声道”，还包括“每个声道分别是什么位置”。
-    // 例如 mono、stereo、5.1、7.1 都属于不同的声道布局。
-    // 这里把输入音频解码器的声道布局拷贝给输出音频编码器，
-    // 表示输出端沿用输入端的声道组织方式。
-    av_channel_layout_copy(&out_audio_enc_ctx->ch_layout, &in_audio_dec_ctx->ch_layout);
-    out_audio_enc_ctx->time_base = AVRational{1, in_audio_dec_ctx->sample_rate};
-
-
-    AVPacket *pkt = av_packet_alloc();
-    AVFrame *frame = av_frame_alloc();
-    
-    while (av_read_frame(in_fmt_ctx, pkt) >= 0) {
-        if (pkt->stream_index == input_options.in_video_index) {
-            ret = avcodec_send_packet(in_video_dec_ctx, pkt);
-            av_packet_unref(pkt);
-            if (ret < 0) {
-                std::cerr << "failed to send packet to video decoder" << std::endl;
-                return -1;
-            }
-
-            while ((ret = avcodec_receive_frame(in_video_dec_ctx, frame)) >= 0) {
-                AVFrame *sw_frame = av_frame_alloc();
-                if (!sw_frame) {
-                    std::cerr << "failed to allocate sw frame" << std::endl;
-                    return -1;
-                }
-                sw_frame->format = AV_PIX_FMT_YUV420P;
-                sw_frame->width = out_video_enc_ctx->width;
-                sw_frame->height = out_video_enc_ctx->height;
-
-                ret = av_frame_get_buffer(sw_frame, 32);
-                if (ret < 0) {
-                    std::cerr << "failed to get buffer for sw frame" << std::endl;
-                    av_frame_free(&sw_frame);
-                    return AVERROR(EINVAL);
-                }
-
-                av_frame_make_writable(sw_frame);
-
-                sws_ctx = sws_getCachedContext(
-                    sws_ctx, 
-                    in_video_dec_ctx->width, 
-                    in_video_dec_ctx->height, 
-                    in_video_dec_ctx->pix_fmt, 
-                    out_video_enc_ctx->width, 
-                    out_video_enc_ctx->height, 
-                    out_video_enc_ctx->pix_fmt,
-                    SWS_BILINEAR, 
-                    nullptr, 
-                    nullptr,
-                    nullptr 
-                );
-                if (!sws_ctx){
-                    std::cerr << "failed to get sws context" << std::endl;
-                    return -1;
-                }
-
-
-                ret =sws_scale(
-                    sws_ctx,
-                    frame->data,
-                    frame->linesize,
-                    0,
-                    frame->height,
-                    sw_frame->data,
-                    sw_frame->linesize);
-
-                if (ret < 0) {
-                    std::cerr << "failed to scale frame" << std::endl;
-                    av_frame_free(&frame);
-                    return AVERROR(EINVAL);
-                }
-
-                int64_t src_pts = frame->best_effort_timestamp;
-                if (src_pts == AV_NOPTS_VALUE) {
-                    src_pts = frame->pts;
-                }
-                if (src_pts != AV_NOPTS_VALUE) {
-                    sw_frame->pts = av_rescale_q(src_pts, in_video_dec_ctx->time_base, out_video_enc_ctx->time_base);
-                } else {
-                    sw_frame->pts = next_video_pts++;
-                }
-                
-                ret = avcodec_send_frame(out_video_enc_ctx, sw_frame);
-
-                if (ret < 0) {
-                    std::cerr << "failed to send frame to video encoder" << std::endl;
-                    av_frame_free(&sw_frame);
-                    return AVERROR(EINVAL);
-                }
-
-                av_frame_free(&sw_frame);
-
-                AVPacket *out_pkt = av_packet_alloc();
-
-                while ((ret = avcodec_receive_packet(out_video_enc_ctx, out_pkt) ) >= 0) {
-                    AVStream *out_stream = out_fmt_ctx->streams[input_options.in_video_index];
-                    av_packet_rescale_ts(out_pkt, out_video_enc_ctx->time_base, out_stream->time_base);
-                    out_pkt->stream_index = input_options.out_video_index;
-                    ret = av_interleaved_write_frame(out_fmt_ctx, out_pkt);
-                    if (ret < 0) {
-                        std::cerr << "failed to write packet to output file" << std::endl;
-                        av_packet_free(&out_pkt);
-                        return AVERROR(EINVAL);
-                    }
-                    av_packet_unref(out_pkt);
-                    av_packet_free(&out_pkt);
-                }
-                if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
-                    ret = 0;
-                }
-                if (ret < 0) {
-                    std::cerr << "failed to receive packet from video encoder" << std::endl;
-                    av_packet_free(&out_pkt);
-                    return AVERROR(EINVAL);
-                }
-                av_packet_free(&out_pkt);
-
-            }
-
-        } else if (pkt->stream_index == input_options.in_audio_index) {
-            ret = avcodec_send_packet(in_audio_dec_ctx, pkt);
-        
+        int local_ret = av_frame_get_buffer(sw_frame, 32);
+        if (local_ret < 0) {
+            std::cerr << "failed to get buffer for sw frame" << std::endl;
+            av_frame_free(&sw_frame);
+            return AVERROR(EINVAL);
         }
 
+        av_frame_make_writable(sw_frame);
+
+        sws_ctx = sws_getCachedContext(
+            sws_ctx,
+            in_video_dec_ctx->width,
+            in_video_dec_ctx->height,
+            in_video_dec_ctx->pix_fmt,
+            out_video_enc_ctx->width,
+            out_video_enc_ctx->height,
+            out_video_enc_ctx->pix_fmt,
+            SWS_BILINEAR,
+            nullptr,
+            nullptr,
+            nullptr
+        );
+        if (!sws_ctx){
+            std::cerr << "failed to get sws context" << std::endl;
+            av_frame_free(&sw_frame);
+            return AVERROR(EINVAL);
+        }
+
+        local_ret = sws_scale(
+            sws_ctx,
+            decoded_frame->data,
+            decoded_frame->linesize,
+            0,
+            decoded_frame->height,
+            sw_frame->data,
+            sw_frame->linesize
+        );
+        if (local_ret < 0) {
+            std::cerr << "failed to scale frame" << std::endl;
+            av_frame_free(&sw_frame);
+            return AVERROR(EINVAL);
+        }
+
+        int64_t src_pts = decoded_frame->best_effort_timestamp;
+        if (src_pts == AV_NOPTS_VALUE) {
+            src_pts = decoded_frame->pts;
+        }
+        if (src_pts != AV_NOPTS_VALUE) {
+            sw_frame->pts = av_rescale_q(
+                src_pts,
+                in_fmt_ctx->streams[input_options.in_video_index]->time_base,
+                out_video_enc_ctx->time_base
+            );
+        } else {
+            sw_frame->pts = next_video_pts++;
+        }
+
+        local_ret = avcodec_send_frame(out_video_enc_ctx, sw_frame);
+        av_frame_free(&sw_frame);
+        if (local_ret < 0) {
+            std::cerr << "failed to send frame to video encoder" << std::endl;
+            return AVERROR(EINVAL);
+        }
+
+        AVPacket *out_pkt = av_packet_alloc();
+        if (!out_pkt) {
+            std::cerr << "failed to alloc output packet" << std::endl;
+            return AVERROR(ENOMEM);
+        }
+
+        while ((local_ret = avcodec_receive_packet(out_video_enc_ctx, out_pkt)) >= 0) {
+            AVStream *out_stream = out_fmt_ctx->streams[input_options.out_video_index];
+            av_packet_rescale_ts(out_pkt, out_video_enc_ctx->time_base, out_stream->time_base);
+            out_pkt->stream_index = input_options.out_video_index;
+            local_ret = av_interleaved_write_frame(out_fmt_ctx, out_pkt);
+            if (local_ret < 0) {
+                std::cerr << "failed to write packet to output file" << std::endl;
+                av_packet_free(&out_pkt);
+                return AVERROR(EINVAL);
+            }
+            av_packet_unref(out_pkt);
+        }
+
+        if (local_ret == AVERROR(EAGAIN) || local_ret == AVERROR_EOF) {
+            local_ret = 0;
+        }
+        if (local_ret < 0) {
+            std::cerr << "failed to receive packet from video encoder" << std::endl;
+            av_packet_free(&out_pkt);
+            return local_ret;
+        }
+        av_packet_free(&out_pkt);
+        return 0;
+    };
+
+    while (av_read_frame(in_fmt_ctx, pkt) >= 0) {
+        if (pkt->stream_index != input_options.in_video_index) {
+            av_packet_unref(pkt);
+            continue;
+        }
+
+        ret = avcodec_send_packet(in_video_dec_ctx, pkt);
+        av_packet_unref(pkt);
+        if (ret < 0) {
+            std::cerr << "failed to send packet to video decoder" << std::endl;
+            goto end;
+        }
+
+        while ((ret = avcodec_receive_frame(in_video_dec_ctx, frame)) >= 0) {
+            ret = encode_and_write_video_frame(frame);
+            if (ret < 0) {
+                goto end;
+            }
+        }
     }
+
+    // 先 flush 解码器，避免输入尾帧丢失
+    ret = avcodec_send_packet(in_video_dec_ctx, nullptr);
+    if (ret < 0) {
+        std::cerr << "failed to flush decoder(send null packet): " << ff_err2str(ret) << std::endl;
+        goto end;
+    }
+
+    while ((ret = avcodec_receive_frame(in_video_dec_ctx, frame)) >= 0) {
+        ret = encode_and_write_video_frame(frame);
+        if (ret < 0) {
+            goto end;
+        }
+    }
+    if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
+        ret = 0;
+    }
+
+    flush_pkt = av_packet_alloc();
+
+    ret = avcodec_send_frame(out_video_enc_ctx, nullptr); // flush encoder
+    if (ret < 0) {
+        std::cerr << "failed to flush video encoder(send null frame): " << ff_err2str(ret) << std::endl;
+        goto end;
+    }
+
+    if (!flush_pkt) {
+        std::cerr << "failed to alloc flush packet" << std::endl;
+        goto end;
+    }
+    while ((ret = avcodec_receive_packet(out_video_enc_ctx, flush_pkt)) >= 0) {
+        AVStream *out_stream = out_fmt_ctx->streams[input_options.out_video_index];
+        av_packet_rescale_ts(flush_pkt, out_video_enc_ctx->time_base, out_stream->time_base);
+        flush_pkt->stream_index = input_options.out_video_index;
+        
+        ret = av_interleaved_write_frame(out_fmt_ctx, flush_pkt);
+
+        if (ret < 0) {
+            std::cerr << "failed to write packet to output file" << std::endl;
+            av_packet_free(&flush_pkt);
+            goto end;
+        }
+        av_packet_unref(flush_pkt);
+    }
+    av_packet_free(&flush_pkt);
+
+    if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
+        ret = 0;
+    }
+
+    ret = av_write_trailer(out_fmt_ctx);
+    if (ret < 0) {
+        std::cerr << "failed to write trailer: " << ff_err2str(ret) << std::endl;
+        goto end;
+    }
+
+    end:
+
+
+    av_packet_free(&flush_pkt);
 
     av_packet_free(&pkt);
     av_frame_free(&frame);
-    av_free(sws_ctx);
-    av_free(swr_ctx);
+    sws_freeContext(sws_ctx);
     avcodec_free_context(&in_video_dec_ctx);
-    avcodec_free_context(&in_audio_dec_ctx);
     avcodec_free_context(&out_video_enc_ctx);
-    avcodec_free_context(&out_audio_enc_ctx);
+    if (out_fmt_ctx) {
+        if (!(out_fmt_ctx->oformat->flags & AVFMT_NOFILE) && out_fmt_ctx->pb) {
+            avio_closep(&out_fmt_ctx->pb);
+        }
+        avformat_free_context(out_fmt_ctx);
+        out_fmt_ctx = nullptr;
+    }
     avformat_close_input(&in_fmt_ctx);
     return 0;
 }

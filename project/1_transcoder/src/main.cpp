@@ -541,16 +541,30 @@ static int encode_video_frame(StreamContext &sc, AVFrame *decoded, AVFormatConte
 }
 
 static int fifo_write_audio(StreamContext &sc, AVFrame *decoded) {
-  // swr_get_delay + 当前 nb_samples 用于估算重采样后的目标采样数，
-  // 避免目标缓存分配不足。
+  // 1. 计算重采样器中缓存的延迟样本数（基于解码器的采样率）
+  // 为什么必须获取 delay？
+  // FFmpeg 的重采样器（SwrContext）内部带有缓存（多相 FIR 滤波器等），
+  // 输入和输出并非严格同步。上次转换可能遗留了部分样本在内部缓存中。
+  // 如果不计算 delay，仅根据当前帧的样本数（decoded->nb_samples）分配内存，
+  // 当重采样器将历史遗留样本 + 新样本一起输出时，会导致实际输出样本数大于分配空间，
+  // 从而引发内存越界写（Crash）或数据截断。
+  // 因此，必须询问重采样器内部残留了多少样本，并与当前帧样本数相加，才能算出绝对安全的缓冲区大小。
   const int64_t delay = swr_get_delay(sc.swr_ctx, sc.dec_ctx->sample_rate);
+  
+  // 2. 计算目标采样数：将 (延迟样本数 + 当前帧样本数) 从解码器采样率转换到编码器采样率，并向上取整
   const int dst_nb_samples = av_rescale_rnd(
       delay + decoded->nb_samples,
       sc.enc_ctx->sample_rate,
       sc.dec_ctx->sample_rate,
       AV_ROUND_UP);
 
+  // 3. 为重采样后的音频数据分配内存空间
+  // TODO: 性能优化点：目前每次调用都会重新分配和释放内存（converted_data），
+  // 这在音频处理这种高频调用的场景下效率较低。
+  // 更好的做法是将 converted_data 和其容量（allocated_samples）作为 StreamContext 的成员变量，
+  // 仅在 dst_nb_samples 大于当前容量时才进行 realloc，从而复用内存。
   uint8_t **converted_data = nullptr;
+  // 根据编码器的声道数、计算出的目标采样数和编码器的采样格式来分配数据指针数组和实际的数据缓冲区
   int ret = av_samples_alloc_array_and_samples(
       &converted_data,
       nullptr,
@@ -559,10 +573,12 @@ static int fifo_write_audio(StreamContext &sc, AVFrame *decoded) {
       sc.enc_ctx->sample_fmt,
       0);
   if (ret < 0) {
-    return ret;
+    return ret; // 内存分配失败，返回错误码
   }
 
   // 将解码出的音频转换成编码器目标格式，再写入 FIFO。
+  // 4. 执行重采样/格式转换操作
+  // 将 decoded 中的音频数据转换为目标格式并存入 converted_data 中，返回实际转换的样本数
   ret = swr_convert(
       sc.swr_ctx,
       converted_data,
@@ -570,38 +586,64 @@ static int fifo_write_audio(StreamContext &sc, AVFrame *decoded) {
       const_cast<const uint8_t **>(decoded->extended_data),
       decoded->nb_samples);
   if (ret < 0) {
+    // 转换失败，释放之前分配的内存（先释放数据区，再释放指针数组）
     av_freep(&converted_data[0]);
     av_freep(&converted_data);
     return ret;
   }
 
-  const int converted_samples = ret;
+  const int converted_samples = ret; // 实际转换得到的样本数
+  
+  // 5. 重新分配音频 FIFO 的大小，确保有足够的空间容纳 FIFO 中原有的数据加上新转换的数据
+  // 注意：av_audio_fifo_realloc 内部有容量判断机制。
+  // 只有当请求的样本总数（当前大小 + 新转换大小）大于 FIFO 底层实际已分配的物理容量时，
+  // 才会真正执行内存重新分配（realloc）。如果底层容量足够，它会直接返回成功，不会产生性能损耗。
   if (av_audio_fifo_realloc(sc.audio_fifo, av_audio_fifo_size(sc.audio_fifo) + converted_samples) < 0) {
     av_freep(&converted_data[0]);
     av_freep(&converted_data);
-    return AVERROR(ENOMEM);
+    return AVERROR(ENOMEM); // 内存不足
   }
 
+  // 6. 将转换后的音频数据写入到 FIFO 缓冲区中
+  // 返回值 wrote 表示实际成功写入 FIFO 的样本数（每个声道的样本数）。
+  // 正常情况下，它应该等于请求写入的 converted_samples。
   const int wrote = av_audio_fifo_write(sc.audio_fifo, reinterpret_cast<void **>(converted_data), converted_samples);
+  
+  // 7. 写入完成后，释放临时分配的转换缓冲区
   av_freep(&converted_data[0]);
   av_freep(&converted_data);
+  
+  // 8. 检查实际写入 FIFO 的样本数是否等于预期转换的样本数
   if (wrote < converted_samples) {
-    return AVERROR(EIO);
+    return AVERROR(EIO); // 写入失败或未完全写入，返回 I/O 错误
   }
-  return 0;
+  return 0; // 成功处理
 }
 
 static int encode_audio_from_fifo(StreamContext &sc, AVFormatContext *ofmt_ctx, bool flush) {
+  // 1. 检查编码器是否支持可变帧长（Variable Frame Size）
+  // 大多数音频编码器（如 AAC）要求每次输入固定数量的样本（通常是 1024）。
+  // 少数编码器（如 Vorbis、Opus）允许每次输入任意数量的样本。
   const bool variable_frame_size =
       (sc.enc_ctx->codec->capabilities & AV_CODEC_CAP_VARIABLE_FRAME_SIZE) != 0;
+  
+  // 获取编码器要求的固定帧长，如果未指定则默认给 1024
   const int frame_size = sc.enc_ctx->frame_size > 0 ? sc.enc_ctx->frame_size : 1024;
 
+  // 2. 循环判断 FIFO 中的数据是否足够凑成一帧
+  // 条件 A：FIFO 中的样本数 >= 编码器要求的帧长（正常持续编码情况）
+  // 条件 B：当前是 flush 阶段（文件末尾），且 FIFO 中还有残留数据（即使不够一帧也要强行提取处理）
   while (av_audio_fifo_size(sc.audio_fifo) >= frame_size ||
          (flush && av_audio_fifo_size(sc.audio_fifo) > 0)) {
+    
+    // 3. 计算本次需要读取的样本数和需要分配的帧大小
     const int fifo_size = av_audio_fifo_size(sc.audio_fifo);
+    // 如果支持可变帧长，就把 FIFO 里的数据全读出来；否则严格按照固定帧长读取
     const int read_samples = variable_frame_size ? fifo_size : frame_size;
+    // 分配的样本数通常等于读取的样本数，但如果是固定帧长，无论实际能读出多少（flush时可能不足），都要分配固定大小的空间
     const int alloc_samples = variable_frame_size ? read_samples : frame_size;
 
+    // 4. 分配并初始化 AVFrame
     AVFrame *frame = av_frame_alloc();
     if (!frame) {
       return AVERROR(ENOMEM);
@@ -611,37 +653,46 @@ static int encode_audio_from_fifo(StreamContext &sc, AVFormatContext *ofmt_ctx, 
     av_channel_layout_copy(&frame->ch_layout, &sc.enc_ctx->ch_layout);
     frame->sample_rate = sc.enc_ctx->sample_rate;
 
+    // 根据上面设置的参数（采样率、格式、声道数、样本数），为 frame 分配实际的数据缓冲区
     int ret = av_frame_get_buffer(frame, 0);
     if (ret < 0) {
       av_frame_free(&frame);
       return ret;
     }
 
+    // 5. 从 FIFO 中读取数据到 frame 的缓冲区中
     const int actual_read = av_audio_fifo_read(sc.audio_fifo, reinterpret_cast<void **>(frame->data), read_samples);
     if (actual_read < 0) {
       av_frame_free(&frame);
       return AVERROR(EIO);
     }
-    // 固定帧长编码器（如常见 AAC）要求每帧 frame_size 个样本；
-    // flush 尾声时不足 frame_size 需要补静音。
+    
+    // 6. 尾部静音填充（Padding / Silence）
+    // 对于固定帧长编码器（如常见 AAC），每次必须严格输入 frame_size 个样本。
+    // 在 flush 尾声时，FIFO 里剩下的数据可能不足 frame_size，此时需要将缺失的部分补上静音数据，否则编码器会报错。
     if (!variable_frame_size && actual_read < frame_size) {
       av_samples_set_silence(
           frame->data,
-          actual_read,
-          frame_size - actual_read,
+          actual_read,                 // 从哪个偏移量开始补静音
+          frame_size - actual_read,    // 需要补多少个样本的静音
           sc.enc_ctx->ch_layout.nb_channels,
           sc.enc_ctx->sample_fmt);
     }
 
+    // 7. 设置时间戳（PTS）
+    // 音频时间轴通常以“采样点”为单位推进（即 time_base = 1 / sample_rate）。
+    // 所以下一帧的 PTS 就是当前 PTS 加上本帧包含的样本数。
     frame->pts = sc.next_audio_pts;
-    // 音频时间轴以“采样点”为单位推进，time_base=1/sample_rate。
     sc.next_audio_pts += frame->nb_samples;
 
+    // 8. 发送给编码器进行编码
     ret = avcodec_send_frame(sc.enc_ctx, frame);
-    av_frame_free(&frame);
+    av_frame_free(&frame); // 发送后即可释放 frame（编码器内部会接管或拷贝数据）
     if (ret < 0) {
       return ret;
     }
+    
+    // 9. 尝试从编码器中读取编码后的数据包（Packet）并写入输出文件
     ret = write_encoded_packets(sc, ofmt_ctx);
     if (ret < 0) {
       return ret;
