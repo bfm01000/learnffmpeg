@@ -50,8 +50,6 @@ int main(int argc, char** argv) {
         avformat_close_input(&fmt_ctx);
         return -1;
     }
-
-    
     
     
     
