@@ -82,6 +82,11 @@ public:
 
     Status Seek(int64_t timestamp_us) override {
         // avformat_seek_file is more accurate than av_seek_frame for seeking to a specific timestamp
+        // 注意：FFmpeg 的 Seek 永远是基于“关键帧（I帧）”的。
+        // 如果 GOP 为 1000ms，关键帧在 0ms, 1000ms...
+        // 第一次 Seek 到 500ms：底层会跳到 0ms 的关键帧，你需要从 0ms 开始解码，一直解到 500ms（丢弃 0-499ms 的画面）。
+        // 第二次 Seek 到 600ms：底层依然会跳到 0ms 的关键帧，你需要再次从 0ms 开始解码，一直解到 600ms。
+        // FFmpeg 的 Seek 不会“记住”你之前解到了哪里，每次 Seek 都会重置解码器状态（Flush）并从目标时间点之前的最近一个关键帧重新开始。
         int ret = avformat_seek_file(fmt_ctx_, -1, INT64_MIN, timestamp_us, timestamp_us, 0);
         if (ret < 0) return Status::Ffmpeg("avformat_seek_file failed: " + FfErr(ret), ret);
         return Status::Ok();
@@ -97,12 +102,15 @@ class FfmpegVideoDecoder : public IVideoDecoder {
 public:
     ~FfmpegVideoDecoder() override {
         avcodec_free_context(&ctx_);
+        if (hw_device_ctx_) {
+            av_buffer_unref(&hw_device_ctx_);
+        }
     }
 
     Status Open(int codec_id,
                 const AVCodecParameters *codecpar,
-                bool /*enable_hw_decode*/,
-                const char * /*preferred_hw_device*/) override {
+                bool enable_hw_decode,
+                const char *preferred_hw_device) override {
         const AVCodec *decoder = avcodec_find_decoder(static_cast<AVCodecID>(codec_id));
         if (!decoder) return Status::NotFound("Decoder not found");
 
@@ -111,6 +119,16 @@ public:
 
         int ret = avcodec_parameters_to_context(ctx_, codecpar);
         if (ret < 0) return Status::Ffmpeg("copy decoder codecpar failed: " + FfErr(ret), ret);
+
+        if (enable_hw_decode && preferred_hw_device && std::string(preferred_hw_device) == "videotoolbox") {
+            ret = av_hwdevice_ctx_create(&hw_device_ctx_, AV_HWDEVICE_TYPE_VIDEOTOOLBOX, nullptr, nullptr, 0);
+            if (ret == 0) {
+                ctx_->hw_device_ctx = av_buffer_ref(hw_device_ctx_);
+            } else {
+                // Fallback to software decoding if hardware init fails
+                av_log(nullptr, AV_LOG_WARNING, "Failed to create videotoolbox hw device context, falling back to software decoding.\n");
+            }
+        }
 
         ret = avcodec_open2(ctx_, decoder, nullptr);
         if (ret < 0) return Status::Ffmpeg("open decoder failed: " + FfErr(ret), ret);
@@ -154,6 +172,7 @@ public:
 
 private:
     AVCodecContext *ctx_ = nullptr;
+    AVBufferRef *hw_device_ctx_ = nullptr;
 };
 
 class FfmpegFrameConverter : public IFrameConverter {

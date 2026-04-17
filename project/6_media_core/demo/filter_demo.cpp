@@ -14,15 +14,17 @@ int main(int argc, char **argv) {
     config.input_path = argv[1];
     config.output_path = argv[2];
     config.output_format = "mp4";
+#ifdef __APPLE__
+    config.video_encoder_name = "h264_videotoolbox";
+    config.preferred_hw_device = "videotoolbox";
+#else
     config.video_encoder_name = "libx264";
+#endif
     config.target_width = 640;
     config.target_height = 360;
     config.target_fps = 30;
     config.video_bitrate = 1000 * 1000; // 1Mbps
     config.enable_hw_decode = true;
-#ifdef __APPLE__
-    config.preferred_hw_device = "videotoolbox";
-#endif
 
     bool enable_watermark = (argc > 3) ? std::stoi(argv[3]) : 0;
     bool enable_color = (argc > 4) ? std::stoi(argv[4]) : 0;

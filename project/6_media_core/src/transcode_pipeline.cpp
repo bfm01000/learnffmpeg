@@ -79,11 +79,16 @@ Status TranscodePipeline::Run(const VideoTranscodeConfig &config) {
     st = muxer->WriteHeader();
     if (!st.ok()) return st;
 
+    // 以下所有的 AVPacket 和 AVFrame 结构体外壳都是可以并且强烈建议在循环中重复使用的。
+    // 它们在循环外只分配一次（av_packet_alloc / av_frame_alloc），
+    // 在循环内部每次使用完毕后，通过 av_packet_unref() 或 av_frame_unref() 清空内部数据和状态，
+    // 即可在下一次循环中安全复用，避免频繁的内存分配和释放。
     std::unique_ptr<AVPacket, void (*)(AVPacket *)> in_pkt(av_packet_alloc(), [](AVPacket *p) { av_packet_free(&p); });
     std::unique_ptr<AVFrame, void (*)(AVFrame *)> dec_frame(av_frame_alloc(), [](AVFrame *f) { av_frame_free(&f); });
+    std::unique_ptr<AVFrame, void (*)(AVFrame *)> sw_frame(av_frame_alloc(), [](AVFrame *f) { av_frame_free(&f); });
     std::unique_ptr<AVFrame, void (*)(AVFrame *)> conv_frame(av_frame_alloc(), [](AVFrame *f) { av_frame_free(&f); });
     std::unique_ptr<AVPacket, void (*)(AVPacket *)> out_pkt(av_packet_alloc(), [](AVPacket *p) { av_packet_free(&p); });
-    if (!in_pkt || !dec_frame || !conv_frame || !out_pkt) return Status::Internal("alloc ffmpeg objects failed");
+    if (!in_pkt || !dec_frame || !sw_frame || !conv_frame || !out_pkt) return Status::Internal("alloc ffmpeg objects failed");
 
     if (config.trim_start_us > 0) {
         st = demuxer->Seek(config.trim_start_us);
@@ -111,12 +116,22 @@ Status TranscodePipeline::Run(const VideoTranscodeConfig &config) {
             }
         }
 
+        // 写音频包
         if (in_pkt->stream_index == demuxer->AudioStreamIndex() && out_audio_stream_index >= 0) {
             st = muxer->WritePacket(in_pkt.get(), demuxer->AudioStreamTimeBase(), out_audio_stream_index);
             if (!st.ok()) return st;
+            // 下一个包
             continue;
         }
+
+        // 写视频包
         if (in_pkt->stream_index != demuxer->VideoStreamIndex()) continue;
+        
+        // 将数据包送给解码器。送包后 in_pkt 即可安全释放（unref），不影响解码器内部状态。
+        // FFmpeg 默认且首选“零拷贝”机制：
+        // 1. 增加引用计数（Reference，极快/首选）：直接拷贝底层数据指针（AVBufferRef）并将引用计数 +1，实现零拷贝。
+        // 2. 拷贝数据（Copy，较慢/备用）：仅在兼容老旧解码器或数据未被引用计数管理时，才会发生实际内存拷贝。
+        // （注：即使发生拷贝，压缩数据体积小，耗时极低，不会成为性能瓶颈）
         st = decoder->SendPacket(in_pkt.get());
         if (!st.ok()) return st;
 
@@ -126,6 +141,17 @@ Status TranscodePipeline::Run(const VideoTranscodeConfig &config) {
             st = decoder->ReceiveFrame(dec_frame.get(), &again, &dec_eof);
             if (!st.ok()) return st;
             if (again || dec_eof) break;
+
+            AVFrame* frame_to_process = dec_frame.get();
+            if (dec_frame->format == AV_PIX_FMT_VIDEOTOOLBOX && dec_frame->hw_frames_ctx != nullptr) {
+                av_frame_unref(sw_frame.get());
+                // 将解码后的图像数据从硬件显存 (dec_frame) 拷贝到系统内存 (sw_frame) 中
+                int ret = av_hwframe_transfer_data(sw_frame.get(), dec_frame.get(), 0);
+                if (ret < 0) return Status::Ffmpeg("hwframe transfer data failed", ret);
+                // 拷贝帧的元数据属性（如 PTS 时间戳、宽高比、颜色空间等），因为上一步只拷贝了像素数据
+                av_frame_copy_props(sw_frame.get(), dec_frame.get());
+                frame_to_process = sw_frame.get();
+            }
 
             auto process_frame = [&](AVFrame* frame) -> Status {
                 av_frame_unref(conv_frame.get());
@@ -154,7 +180,7 @@ Status TranscodePipeline::Run(const VideoTranscodeConfig &config) {
             };
 
             if (use_filter) {
-                st = filter->SendFrame(dec_frame.get());
+                st = filter->SendFrame(frame_to_process);
                 if (!st.ok()) return st;
                 while (true) {
                     std::unique_ptr<AVFrame, void(*)(AVFrame*)> filt_frame(av_frame_alloc(), [](AVFrame* f){ av_frame_free(&f); });
@@ -167,7 +193,7 @@ Status TranscodePipeline::Run(const VideoTranscodeConfig &config) {
                     if (!st.ok()) return st;
                 }
             } else {
-                st = process_frame(dec_frame.get());
+                st = process_frame(frame_to_process);
                 if (!st.ok()) return st;
             }
         }
@@ -182,6 +208,15 @@ Status TranscodePipeline::Run(const VideoTranscodeConfig &config) {
         if (!st.ok()) return st;
         if (again || dec_eof) break;
 
+        AVFrame* frame_to_process = dec_frame.get();
+        if (dec_frame->format == AV_PIX_FMT_VIDEOTOOLBOX && dec_frame->hw_frames_ctx != nullptr) {
+            av_frame_unref(sw_frame.get());
+            int ret = av_hwframe_transfer_data(sw_frame.get(), dec_frame.get(), 0);
+            if (ret < 0) return Status::Ffmpeg("hwframe transfer data failed", ret);
+            av_frame_copy_props(sw_frame.get(), dec_frame.get());
+            frame_to_process = sw_frame.get();
+        }
+
         auto process_frame = [&](AVFrame* frame) -> Status {
             av_frame_unref(conv_frame.get());
             Status s = converter->Convert(frame, conv_frame.get());
@@ -193,7 +228,7 @@ Status TranscodePipeline::Run(const VideoTranscodeConfig &config) {
         };
 
         if (use_filter) {
-            st = filter->SendFrame(dec_frame.get());
+            st = filter->SendFrame(frame_to_process);
             if (!st.ok()) return st;
             while (true) {
                 std::unique_ptr<AVFrame, void(*)(AVFrame*)> filt_frame(av_frame_alloc(), [](AVFrame* f){ av_frame_free(&f); });
@@ -206,7 +241,7 @@ Status TranscodePipeline::Run(const VideoTranscodeConfig &config) {
                 if (!st.ok()) return st;
             }
         } else {
-            st = process_frame(dec_frame.get());
+            st = process_frame(frame_to_process);
             if (!st.ok()) return st;
         }
     }
