@@ -17,15 +17,22 @@ extern "C" {
 namespace media_core {
 namespace {
 
+// 辅助函数：将 FFmpeg 的整型错误码（负数）转换为人类可读的字符串描述
+// 例如：将 -1094995529 转换为 "Invalid data found when processing input"
 std::string FfErr(int err) {
+    // AV_ERROR_MAX_STRING_SIZE 是 FFmpeg 宏定义的错误字符串最大长度（通常是 64 字节）
     char buf[AV_ERROR_MAX_STRING_SIZE] = {0};
+    // 调用 FFmpeg 提供的函数，将错误码 err 翻译成字符串并写入 buf 中
     av_strerror(err, buf, sizeof(buf));
+    // 将 C 风格的字符数组转换为 C++ 的 std::string 并返回，方便日志打印和拼接
     return std::string(buf);
 }
 
 class FfmpegDemuxer : public IDemuxer {
 public:
     ~FfmpegDemuxer() override {
+        // avformat_close_input 内部会安全地处理空指针的情况。
+        // 如果 fmt_ctx_ 为 nullptr 或者 *fmt_ctx_ 为 nullptr，它会直接返回，不会引发崩溃。
         avformat_close_input(&fmt_ctx_);
     }
 
@@ -53,9 +60,13 @@ public:
     int VideoStreamIndex() const override { return video_stream_idx_; }
 
     Status ReadPacket(AVPacket *pkt, bool *eof) override {
+        // 每次读取新包之前，先重置 EOF（End Of File）标志为 false。
+        // 这表示当前还没有读到文件末尾，接下来的 av_read_frame 可能会成功读到数据。
         *eof = false;
         int ret = av_read_frame(fmt_ctx_, pkt);
         if (ret == AVERROR_EOF) {
+            // 如果 av_read_frame 返回 AVERROR_EOF，说明真的读到文件末尾了。
+            // 将标志位设为 true，通知上层调用者（比如 TranscodePipeline 里的 while 循环可以退出了）。
             *eof = true;
             return Status::Ok();
         }
