@@ -17,6 +17,13 @@ struct VideoTranscodeConfig {
 
     bool enable_hw_decode = true;
     std::string preferred_hw_device; // videotoolbox/nvdec/qsv/vaapi
+
+    // Trim options in microseconds (us)
+    int64_t trim_start_us = -1;
+    int64_t trim_end_us = -1;
+
+    // Filter description (e.g. "drawtext=text='create by dml + %{pts\\:hms}':x=10:y=10:fontsize=24:fontcolor=white")
+    std::string filter_desc;
 };
 
 }  // namespace media_core

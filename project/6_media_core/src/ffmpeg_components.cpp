@@ -8,6 +8,10 @@ extern "C" {
 #include <libavformat/avformat.h>
 #include <libswscale/swscale.h>
 #include <libavutil/error.h>
+#include <libavfilter/avfilter.h>
+#include <libavfilter/buffersrc.h>
+#include <libavfilter/buffersink.h>
+#include <libavutil/opt.h>
 }
 
 namespace media_core {
@@ -76,6 +80,13 @@ public:
     AVRational AudioStreamTimeBase() const override { return fmt_ctx_->streams[audio_stream_idx_]->time_base; }
     const AVCodecParameters *AudioCodecParameters() const override { return fmt_ctx_->streams[audio_stream_idx_]->codecpar; }
 
+    Status Seek(int64_t timestamp_us) override {
+        // avformat_seek_file is more accurate than av_seek_frame for seeking to a specific timestamp
+        int ret = avformat_seek_file(fmt_ctx_, -1, INT64_MIN, timestamp_us, timestamp_us, 0);
+        if (ret < 0) return Status::Ffmpeg("avformat_seek_file failed: " + FfErr(ret), ret);
+        return Status::Ok();
+    }
+
 private:
     AVFormatContext *fmt_ctx_ = nullptr;
     int video_stream_idx_ = -1;
@@ -133,6 +144,11 @@ public:
             return Status::Ok();
         }
         if (ret < 0) return Status::Ffmpeg("receive frame failed: " + FfErr(ret), ret);
+        return Status::Ok();
+    }
+
+    Status Flush() override {
+        avcodec_flush_buffers(ctx_);
         return Status::Ok();
     }
 
@@ -344,6 +360,84 @@ public:
     }
 };
 
+class FfmpegVideoFilter : public IVideoFilter {
+public:
+    ~FfmpegVideoFilter() override {
+        if (graph_) avfilter_graph_free(&graph_);
+    }
+
+    Status Init(const char* filter_desc, int in_width, int in_height, int in_pix_fmt, AVRational in_tb, AVRational in_sar) override {
+        graph_ = avfilter_graph_alloc();
+        if (!graph_) return Status::Internal("avfilter_graph_alloc failed");
+
+        char args[512];
+        snprintf(args, sizeof(args),
+                 "video_size=%dx%d:pix_fmt=%d:time_base=%d/%d:pixel_aspect=%d/%d",
+                 in_width, in_height, in_pix_fmt,
+                 in_tb.num, in_tb.den,
+                 in_sar.num, in_sar.den);
+
+        const AVFilter* buffersrc = avfilter_get_by_name("buffer");
+        const AVFilter* buffersink = avfilter_get_by_name("buffersink");
+
+        int ret = avfilter_graph_create_filter(&src_ctx_, buffersrc, "in", args, nullptr, graph_);
+        if (ret < 0) return Status::Ffmpeg("create buffer filter failed", ret);
+
+        ret = avfilter_graph_create_filter(&sink_ctx_, buffersink, "out", nullptr, nullptr, graph_);
+        if (ret < 0) return Status::Ffmpeg("create buffersink filter failed", ret);
+
+        AVFilterInOut* outputs = avfilter_inout_alloc();
+        AVFilterInOut* inputs = avfilter_inout_alloc();
+
+        outputs->name = av_strdup("in");
+        outputs->filter_ctx = src_ctx_;
+        outputs->pad_idx = 0;
+        outputs->next = nullptr;
+
+        inputs->name = av_strdup("out");
+        inputs->filter_ctx = sink_ctx_;
+        inputs->pad_idx = 0;
+        inputs->next = nullptr;
+
+        ret = avfilter_graph_parse_ptr(graph_, filter_desc, &inputs, &outputs, nullptr);
+        avfilter_inout_free(&inputs);
+        avfilter_inout_free(&outputs);
+        if (ret < 0) return Status::Ffmpeg("avfilter_graph_parse_ptr failed: " + FfErr(ret), ret);
+
+        ret = avfilter_graph_config(graph_, nullptr);
+        if (ret < 0) return Status::Ffmpeg("avfilter_graph_config failed: " + FfErr(ret), ret);
+
+        return Status::Ok();
+    }
+
+    Status SendFrame(AVFrame* frame) override {
+        int ret = av_buffersrc_add_frame_flags(src_ctx_, frame, AV_BUFFERSRC_FLAG_KEEP_REF);
+        if (ret < 0) return Status::Ffmpeg("av_buffersrc_add_frame failed: " + FfErr(ret), ret);
+        return Status::Ok();
+    }
+
+    Status ReceiveFrame(AVFrame* frame, bool* again, bool* eof) override {
+        *again = false;
+        *eof = false;
+        int ret = av_buffersink_get_frame(sink_ctx_, frame);
+        if (ret == AVERROR(EAGAIN)) {
+            *again = true;
+            return Status::Ok();
+        }
+        if (ret == AVERROR_EOF) {
+            *eof = true;
+            return Status::Ok();
+        }
+        if (ret < 0) return Status::Ffmpeg("av_buffersink_get_frame failed: " + FfErr(ret), ret);
+        return Status::Ok();
+    }
+
+private:
+    AVFilterGraph* graph_ = nullptr;
+    AVFilterContext* src_ctx_ = nullptr;
+    AVFilterContext* sink_ctx_ = nullptr;
+};
+
 }  // namespace
 
 std::unique_ptr<IDemuxer> CodecFactory::CreateDemuxer() { return std::unique_ptr<IDemuxer>(new FfmpegDemuxer()); }
@@ -352,5 +446,6 @@ std::unique_ptr<IFrameConverter> CodecFactory::CreateFrameConverter() { return s
 std::unique_ptr<IVideoEncoder> CodecFactory::CreateVideoEncoder() { return std::unique_ptr<IVideoEncoder>(new FfmpegVideoEncoder()); }
 std::unique_ptr<IMuxer> CodecFactory::CreateMuxer() { return std::unique_ptr<IMuxer>(new FfmpegMuxer()); }
 std::unique_ptr<ICapabilityProbe> CodecFactory::CreateCapabilityProbe() { return std::unique_ptr<ICapabilityProbe>(new FfmpegCapabilityProbe()); }
+std::unique_ptr<IVideoFilter> CodecFactory::CreateVideoFilter() { return std::unique_ptr<IVideoFilter>(new FfmpegVideoFilter()); }
 
 }  // namespace media_core

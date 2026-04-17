@@ -8,6 +8,7 @@
 #include "media_core/interfaces/muxer.h"
 #include "media_core/interfaces/video_decoder.h"
 #include "media_core/interfaces/video_encoder.h"
+#include "media_core/interfaces/video_filter.h"
 
 namespace media_core {
 
@@ -19,6 +20,7 @@ public:
     static std::unique_ptr<IVideoEncoder> CreateVideoEncoder();
     static std::unique_ptr<IMuxer> CreateMuxer();
     static std::unique_ptr<ICapabilityProbe> CreateCapabilityProbe();
+    static std::unique_ptr<IVideoFilter> CreateVideoFilter();
 };
 
 }  // namespace media_core

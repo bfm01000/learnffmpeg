@@ -20,6 +20,7 @@ public:
     virtual Status SendPacket(AVPacket *pkt) = 0;
     virtual Status SendEof() = 0;
     virtual Status ReceiveFrame(AVFrame *frame, bool *again, bool *eof) = 0;
+    virtual Status Flush() = 0;
 };
 
 }  // namespace media_core

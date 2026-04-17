@@ -14,6 +14,7 @@ pkg_check_modules(
     libavcodec
     libavutil
     libswscale
+    libavfilter
 )
 
 add_library(media_core STATIC
@@ -33,3 +34,9 @@ target_compile_options(media_core PUBLIC ${FFMPEG_CFLAGS_OTHER})
 
 add_executable(media_core_demo demo/transcode_demo.cpp)
 target_link_libraries(media_core_demo PRIVATE media_core)
+
+add_executable(media_core_trim_demo demo/trim_demo.cpp)
+target_link_libraries(media_core_trim_demo PRIVATE media_core)
+
+add_executable(media_core_filter_demo demo/filter_demo.cpp)
+target_link_libraries(media_core_filter_demo PRIVATE media_core)

@@ -27,6 +27,9 @@ public:
     virtual int AudioStreamIndex() const = 0;
     virtual AVRational AudioStreamTimeBase() const = 0;
     virtual const AVCodecParameters *AudioCodecParameters() const = 0;
+
+    // Seek to a specific timestamp in microseconds.
+    virtual Status Seek(int64_t timestamp_us) = 0;
 };
 
 }  // namespace media_core
