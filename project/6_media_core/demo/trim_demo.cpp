@@ -17,13 +17,13 @@ int main(int argc, char **argv) {
     config.video_encoder_name = "h264_videotoolbox";
     config.preferred_hw_device = "videotoolbox";
 #else
-    config.video_encoder_name = "libx264";
+    config.video_encoder_name = "h264_v4l2m2m";
 #endif
     config.target_width = 640;
     config.target_height = 360;
     config.target_fps = 30;
     config.video_bitrate = 1000 * 1000; // 1Mbps
-    config.enable_hw_decode = true;
+    config.enable_hw_decode = false;
 
     // Parse trim times
     double start_sec = std::stod(argv[3]);

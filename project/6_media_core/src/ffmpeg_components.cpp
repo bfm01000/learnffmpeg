@@ -213,7 +213,7 @@ public:
 
         sws_ = sws_getCachedContext(
             sws_,
-            in_ctx_->width, in_ctx_->height, in_ctx_->pix_fmt,
+            in_frame->width, in_frame->height, static_cast<AVPixelFormat>(in_frame->format),
             out_w_, out_h_, out_fmt_,
             SWS_BILINEAR, nullptr, nullptr, nullptr);
         if (!sws_) return Status::Internal("sws_getCachedContext failed");
@@ -256,6 +256,9 @@ public:
         ctx_->bit_rate = bitrate;
         ctx_->gop_size = 50;
         ctx_->max_b_frames = 2;
+        
+        // Many formats (like MP4/FLV) require global headers (extradata) to decode properly.
+        ctx_->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
 
         int ret = avcodec_open2(ctx_, encoder, nullptr);
         if (ret < 0) return Status::Ffmpeg("open encoder failed: " + FfErr(ret), ret);

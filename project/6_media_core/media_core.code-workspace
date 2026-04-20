@@ -9,13 +9,11 @@
     "cmake.buildDirectory": "${workspaceFolder}/build",
     "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json",
     "C_Cpp.default.includePath": [
-      "${workspaceFolder}/include",
-      "/opt/homebrew/Cellar/ffmpeg/8.0.1/include"
+      "${workspaceFolder}/include"
     ],
     "clangd.arguments": [
       "--background-index",
-      "--compile-commands-dir=${workspaceFolder}/build",
-      "--query-driver=/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/c++"
+      "--compile-commands-dir=${workspaceFolder}/build"
     ]
   }
 }

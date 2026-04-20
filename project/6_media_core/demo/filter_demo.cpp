@@ -5,29 +5,29 @@
 using namespace media_core;
 
 int main(int argc, char **argv) {
-    if (argc < 3) {
-        std::cerr << "Usage: " << argv[0] << " <input_file> <output_file> [enable_watermark: 0/1] [enable_color: 0/1]\n";
-        return -1;
-    }
+    // if (argc < 3) {
+    //     std::cerr << "Usage: " << argv[0] << " <input_file> <output_file> [enable_watermark: 0/1] [enable_color: 0/1]\n";
+    //     return -1;
+    // }
 
     VideoTranscodeConfig config;
-    config.input_path = argv[1];
-    config.output_path = argv[2];
+    config.input_path = "/home/bfm01000/workspace/source/cat.mp4";
+    config.output_path = "/home/bfm01000/workspace/source/filter.mp4";
     config.output_format = "mp4";
 #ifdef __APPLE__
     config.video_encoder_name = "h264_videotoolbox";
     config.preferred_hw_device = "videotoolbox";
 #else
-    config.video_encoder_name = "libx264";
+    config.video_encoder_name = "mpeg4";
 #endif
     config.target_width = 640;
     config.target_height = 360;
     config.target_fps = 30;
     config.video_bitrate = 1000 * 1000; // 1Mbps
-    config.enable_hw_decode = true;
+    config.enable_hw_decode = false;
 
-    bool enable_watermark = (argc > 3) ? std::stoi(argv[3]) : 0;
-    bool enable_color = (argc > 4) ? std::stoi(argv[4]) : 0;
+    bool enable_watermark = true;
+    bool enable_color = false;
 
     std::string filter_desc;
     

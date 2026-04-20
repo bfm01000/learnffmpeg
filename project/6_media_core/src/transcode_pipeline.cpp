@@ -97,6 +97,20 @@ Status TranscodePipeline::Run(const VideoTranscodeConfig &config) {
     }
 
     int64_t next_pts = 0;
+    auto assign_output_pts = [&](AVFrame *src_frame, AVFrame *dst_frame) {
+        int64_t src_pts = src_frame->best_effort_timestamp;
+        if (src_pts == AV_NOPTS_VALUE) src_pts = src_frame->pts;
+        if (src_pts != AV_NOPTS_VALUE) {
+            dst_frame->pts = av_rescale_q(src_pts, in_tb, encoder->Context()->time_base);
+            if (dst_frame->pts >= next_pts) {
+                next_pts = dst_frame->pts + 1;
+            } else {
+                dst_frame->pts = next_pts++;
+            }
+            return;
+        }
+        dst_frame->pts = next_pts++;
+    };
     bool input_eof = false;
     while (!input_eof) {
         av_packet_unref(in_pkt.get());
@@ -158,11 +172,7 @@ Status TranscodePipeline::Run(const VideoTranscodeConfig &config) {
                 Status s = converter->Convert(frame, conv_frame.get());
                 if (!s.ok()) return s;
 
-                int64_t src_pts = frame->best_effort_timestamp;
-                if (src_pts == AV_NOPTS_VALUE) src_pts = frame->pts;
-                conv_frame->pts = (src_pts != AV_NOPTS_VALUE)
-                                      ? av_rescale_q(src_pts, in_tb, encoder->Context()->time_base)
-                                      : next_pts++;
+                assign_output_pts(frame, conv_frame.get());
 
                 s = encoder->SendFrame(conv_frame.get());
                 if (!s.ok()) return s;
@@ -221,9 +231,18 @@ Status TranscodePipeline::Run(const VideoTranscodeConfig &config) {
             av_frame_unref(conv_frame.get());
             Status s = converter->Convert(frame, conv_frame.get());
             if (!s.ok()) return s;
-            conv_frame->pts = next_pts++;
+            assign_output_pts(frame, conv_frame.get());
             s = encoder->SendFrame(conv_frame.get());
             if (!s.ok()) return s;
+            while (true) {
+                av_packet_unref(out_pkt.get());
+                bool enc_again = false, enc_eof = false;
+                s = encoder->ReceivePacket(out_pkt.get(), &enc_again, &enc_eof);
+                if (!s.ok()) return s;
+                if (enc_again || enc_eof) break;
+                s = muxer->WritePacket(out_pkt.get(), encoder->Context()->time_base, out_video_stream_index);
+                if (!s.ok()) return s;
+            }
             return Status::Ok();
         };
 
@@ -246,8 +265,24 @@ Status TranscodePipeline::Run(const VideoTranscodeConfig &config) {
         }
     }
 
-    st = encoder->SendEof();
-    if (!st.ok()) return st;
+    while (true) {
+        st = encoder->SendEof();
+        if (st.ok()) break;
+        if (st.ffmpeg_error != AVERROR(EAGAIN)) return st;
+
+        bool drained_any = false;
+        while (true) {
+            av_packet_unref(out_pkt.get());
+            bool enc_again = false, enc_eof = false;
+            st = encoder->ReceivePacket(out_pkt.get(), &enc_again, &enc_eof);
+            if (!st.ok()) return st;
+            if (enc_again || enc_eof) break;
+            drained_any = true;
+            st = muxer->WritePacket(out_pkt.get(), encoder->Context()->time_base, out_video_stream_index);
+            if (!st.ok()) return st;
+        }
+        if (!drained_any) return Status::Ffmpeg("send encoder eof failed: Resource temporarily unavailable", AVERROR(EAGAIN));
+    }
     while (true) {
         av_packet_unref(out_pkt.get());
         bool enc_again = false, enc_eof = false;
