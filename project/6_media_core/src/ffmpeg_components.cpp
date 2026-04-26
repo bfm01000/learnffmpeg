@@ -213,7 +213,7 @@ public:
 
         sws_ = sws_getCachedContext(
             sws_,
-            in_frame->width, in_frame->height, static_cast<AVPixelFormat>(in_frame->format),
+            in_ctx_->width, in_ctx_->height, in_ctx_->pix_fmt,
             out_w_, out_h_, out_fmt_,
             SWS_BILINEAR, nullptr, nullptr, nullptr);
         if (!sws_) return Status::Internal("sws_getCachedContext failed");

@@ -35,6 +35,10 @@ int main(int argc, char **argv) {
 
     TranscodePipeline pipeline;
     Status st = pipeline.Run(config);
+
+
+
+    
     if (!st.ok()) {
         std::cerr << "Transcode failed: " << st.message << std::endl;
         return -1;
