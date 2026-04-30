@@ -135,9 +135,13 @@ Android 5.0 (API 21) 确实提供了原生的 C++ `AMediaCodec` 接口，但各�
 
 虽然两者在最终目的上都是“传指针、不传数据”，但在底层实现和工程体验上有着天壤之别：
 
-#### A. 谈判机制 vs 霸道总裁（Layout 问题）
-*   **Android（Gralloc 谈判）**：如前文所述，因为芯片有高通、联发科、华为等，GPU 和 VPU 的私有内存排布（Tiled）格式千奇百怪。Android 必须通过 `USAGE` 标志位让系统去“协商”出一个大家都能看懂的格式，协商失败就会退化为 Linear 或直接黑屏报错。
-*   **iOS（统一标准）**：Apple A 系列芯片的 CPU、GPU、VPU 全是自己设计的！操作系统也是自己写的！在 iOS 里，`IOSurface` 底层的内存块排布格式（Block Layout）是 Apple 内部绝对统一的。开发者完全不需要关心底层的对齐和交错问题，系统给你的 `CVPixelBuffer` 永远是所有硬件都能以最高效率直接读取的。
+#### A. 违背物理定律的 API 骗局？（Layout 与格式重组）
+*   **物理定律的铁则**：CPU 只能高效读取 **Linear（线性）** 内存，而 GPU/VPU 必须依赖 **Tiled（块状/Z字形）** 内存才能发挥性能。既然如此，iOS 的 `CVPixelBuffer` 是如何做到让所有硬件都“高效”读取的？其实，Apple 并没有打破物理定律，而是用极度精妙的 API 封装和“软硬一体”的黑科技，掩盖了残酷的转换过程。
+*   **iOS 的三层魔法**：
+    1.  **The Golden Path（黄金路径：不看不摸）**：在标准的音视频管线中（Camera -> Metal -> VideoToolbox），CPU 根本不会去碰像素数据！在这个流程中，`CVPixelBuffer` 底层的物理内存自始至终都是 GPU/VPU 最喜欢的 **Tiled 排布**。开发者只传指针，各硬件单元之间在底层默契配合。
+    2.  **`LockBaseAddress` 的“暗箱操作”**：如果业务强行要求 CPU 读取画面（比如用 CPU 跑 OpenCV 算法），必须调用 `CVPixelBufferLockBaseAddress`。**这是魔法被戳破的瞬间！** iOS 底层驱动会立刻检查这块内存的排布，如果是 Tiled，OS 会极其隐蔽地触发一次 **De-tiling（反交织/线性化）** 操作，将数据重组为 CPU 喜欢的 Linear 格式存入影子内存（Shadow Buffer）。调用 Unlock 时再 Swizzle（交织）回去。**结论：CPU 读 Tiled 内存一样要付出巨大的转换代价，只是 Apple 把这些脏活累活全藏在了 API 之下，让开发者误以为是“无痛读取”。**
+    3.  **Hardware MMU Unswizzler（终极外挂）**：为什么 iOS 做 De-tiling 这种沉重的数学操作依然感觉极快？因为从 A/M 系列芯片开始，Apple 在统一内存架构（UMA）中内置了极其强悍的**硬件内存管理单元（MMU）和专门的格式转换硬件（Unswizzler）**。当你调用 `Lock` 时，大部分情况并不是 CPU 在跑代码硬拷，而是底层硬件控制器以几百 GB/s 的恐怖带宽，瞬间在总线上完成了地址映射和重排。
+*   **Android（Gralloc 谈判机制的无力）**：相比之下，Google 无法掌控硬件（高通、联发科、猎户座等碎片化严重）。Android 无法像 Apple 那样在底层做统一标准的硬件级 Unswizzle。因此，Android 只能把这个残酷的物理问题血淋淋地抛给开发者，通过复杂的 `USAGE` 标志位去“谈判”。如果你在 `AHardwareBuffer` 上强加了 `USAGE_CPU_READ_OFTEN`，各路硬件厂商为了照顾 CPU 的线性读取，通常的妥协结果就是——**这块内存全盘降级为 Linear 线性排布**，直接导致 GPU/VPU 的读写效率暴跌，甚至使得 AFBC/UBWC 等无损硬件压缩彻底失效。
 
 #### B. 接口封装：优雅 vs 晦涩
 *   **Android**：历史包袱重。早期要实现共享内存，得用晦涩的 EGL 扩展、GraphicBuffer（非公开 API）、或者通过 Surface 机制绕圈子。直到 Android 8.0 出了 `AHardwareBuffer` 才算是在 NDK 层有了个干净的接口，但配套的生态（如绑定到 MediaCodec）依然略显繁琐。
