@@ -1,0 +1,23 @@
+Doc/直播性能优化.md
+  c1706b249ed292b1 70-74
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "2fcefd80a30b4df3397819dcc4378f82bb42e313",
+  "prompts": {
+    "c1706b249ed292b1": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "355e605f-5f98-40f3-b80b-98e06e5018d2",
+        "model": "gemini-3.1-pro"
+      },
+      "human_author": "dumenglin",
+      "messages": [],
+      "total_additions": 7,
+      "total_deletions": 2,
+      "accepted_lines": 7,
+      "overriden_lines": 0
+    }
+  }
+}
