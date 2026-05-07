@@ -1,0 +1,34 @@
+av_interview/模拟面试/直播性能优化_面试官追问.md
+  s_c1706b249ed292::t_61d55712431d69 29-34,43-57
+Doc/ffmpeg/pixel_format_memory_layout_guide.md
+  s_c1706b249ed292::t_91f013b1bc6d3c 1-96
+Doc/cpp/std_function_guide.md
+  s_c1706b249ed292::t_4f47ac5752a725 1-200
+Doc/cpp/smart_pointers_guide.md
+  s_c1706b249ed292::t_9544c6955c6c87 92,94-102,107-109
+  s_c1706b249ed292::t_b9039c9b4b9e8e 1-91,93,103-106,110-176
+Doc/零拷贝/AHardwareBuffer_从浅入深完全解析.md
+  s_c1706b249ed292::t_4c9608d06397a6 27-29
+Doc/cpp/lambda_guide.md
+  s_c1706b249ed292::t_5c4476f307d26a 28
+  s_c1706b249ed292::t_1264046f2e750d 16-27,29-32
+  s_c1706b249ed292::t_bcfe3411d8c6dd 38-55
+Doc/cpp/cpp基础知识.md
+  s_c1706b249ed292::t_08d0487080a91a 1-114
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "2e6c0ae24fe22fbb135189f12bb09aeb14f022d4",
+  "prompts": {},
+  "sessions": {
+    "s_c1706b249ed292": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "355e605f-5f98-40f3-b80b-98e06e5018d2",
+        "model": "gemini-3.1-pro"
+      },
+      "human_author": "dumenglin <dumenglin@insta360.com>"
+    }
+  }
+}
