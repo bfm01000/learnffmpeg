@@ -1,0 +1,21 @@
+Doc/cpp/rvalue_interview_quick_reply.md
+  s_c1706b249ed292::t_0d08276ef02417 1-24
+Doc/cpp/lvalue_rvalue_move_guide.md
+  s_c1706b249ed292::t_cf8bf88ac32636 1-125
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "d2312c2da680d0fd5064eda6482d646a16254cba",
+  "prompts": {},
+  "sessions": {
+    "s_c1706b249ed292": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "355e605f-5f98-40f3-b80b-98e06e5018d2",
+        "model": "gemini-3.1-pro"
+      },
+      "human_author": "dumenglin <dumenglin@insta360.com>"
+    }
+  }
+}
