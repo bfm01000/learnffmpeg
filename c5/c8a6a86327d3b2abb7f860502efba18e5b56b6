@@ -1,0 +1,20 @@
+av_interview/模拟面试/中高级CPP开发工程师模拟面试.md
+  s_c1706b249ed292::t_b710f025cc9070 1-4,6-26,36-55,66-73,108-110,112-130,153-160
+  s_c1706b249ed292::t_fb95bf13f538ae 5,27-35,56-65,74-107,111,131-152
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "c5c8a6a86327d3b2abb7f860502efba18e5b56b6",
+  "prompts": {},
+  "sessions": {
+    "s_c1706b249ed292": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "355e605f-5f98-40f3-b80b-98e06e5018d2",
+        "model": "gemini-3.1-pro"
+      },
+      "human_author": "dumenglin <dumenglin@insta360.com>"
+    }
+  }
+}
