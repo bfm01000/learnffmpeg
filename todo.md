@@ -25,3 +25,5 @@ ffmpeg常用接口都列出来，附上在什么场景或者整个pipeline的哪
 解决方案：
 正确解析 Crop 信息：不能死板地用配置的宽高。必须从 MediaCodec 的输出 MediaFormat 中读取 crop-left, crop-top, crop-right, crop-bottom 这四个字段，计算出真实的有效画面区域，然后在 OpenGL 渲染时通过修改纹理坐标（Texture Coordinates）把绿边裁剪掉。
 软硬解兜底策略（Fallback）：捕获 MediaCodec 的 MediaCodec.CodecException，一旦发现硬件解码器初始化失败或抛出严重异常，立刻无缝降级切换到 FFmpeg 软解（CPU 解码），保证业务可用性。
+
+* 学习抓trace
