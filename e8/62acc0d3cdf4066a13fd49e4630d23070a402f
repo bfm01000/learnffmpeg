@@ -1,0 +1,23 @@
+av_interview/项目/AJB逻辑口语表达修正.md
+  s_c1706b249ed292::t_fb376fb190f40b 1-52
+av_interview/项目/核心-预览延时优化.md
+  s_c1706b249ed292::t_0f1ddf466e3a3d 3,5,7,9-11,15,18,21-25,27-34,36
+av_interview/项目/核心-预览延时优化_面试官追问.md
+  s_c1706b249ed292::t_26bc8855d94716 1-87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "e862acc0d3cdf4066a13fd49e4630d23070a402f",
+  "prompts": {},
+  "sessions": {
+    "s_c1706b249ed292": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "355e605f-5f98-40f3-b80b-98e06e5018d2",
+        "model": "gemini-3.1-pro"
+      },
+      "human_author": "dumenglin <dumenglin@insta360.com>"
+    }
+  }
+}
