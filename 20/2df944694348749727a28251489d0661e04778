@@ -1,0 +1,23 @@
+av_interview/项目/AJB代码推演_首帧1500后续300.md
+  s_c1706b249ed292::t_b2624778a0fbc2 1-104
+av_interview/项目/AJB底水机制推演.md
+  s_c1706b249ed292::t_7b2897aa3119f7 16
+av_interview/项目/预览延时优化_面试官追问.md
+  s_c1706b249ed292::t_7f5c784e18d213 61,65-82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "202df944694348749727a28251489d0661e04778",
+  "prompts": {},
+  "sessions": {
+    "s_c1706b249ed292": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "355e605f-5f98-40f3-b80b-98e06e5018d2",
+        "model": "gemini-3.1-pro"
+      },
+      "human_author": "dumenglin <dumenglin@insta360.com>"
+    }
+  }
+}
