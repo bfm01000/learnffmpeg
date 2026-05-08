@@ -1,0 +1,36 @@
+av_interview/项目/预览延时优化_面试官追问.md
+  s_c1706b249ed292::t_4ceb48b4130e15 98-117
+  s_c1706b249ed292::t_08f8efd324b241 61,73-74,76-80,83
+  s_c1706b249ed292::t_ea7588dde39c6e 118-121,124-144,146-148
+  s_c1706b249ed292::t_7f5c784e18d213 75
+  s_c1706b249ed292::t_87228024702c93 122-123,145
+av_interview/项目/自动剪辑性能优化_面试官追问.md
+  s_ce809ce35242e9::t_5e938282a29793 1-352
+av_interview/项目/核心-预览延时优化.md
+  s_c1706b249ed292::t_a4361f585d6d46 24,26,32
+  s_c1706b249ed292::t_2971a02600e018 100
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "f31ea3d44c03df678fddca971cc0335f2becc149",
+  "prompts": {},
+  "sessions": {
+    "s_c1706b249ed292": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "355e605f-5f98-40f3-b80b-98e06e5018d2",
+        "model": "gemini-3.1-pro"
+      },
+      "human_author": "dumenglin <dumenglin@insta360.com>"
+    },
+    "s_ce809ce35242e9": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "91ecfaaa-e6ba-4d28-96b1-ce0ca63ca061",
+        "model": "gpt-5.5"
+      },
+      "human_author": "dumenglin <dumenglin@insta360.com>"
+    }
+  }
+}
