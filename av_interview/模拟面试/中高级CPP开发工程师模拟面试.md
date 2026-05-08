@@ -127,6 +127,198 @@
     1. **在构造函数中**：对象的构造是从基类向子类进行的。当基类的构造函数执行时，子类部分还根本没有被初始化，此时对象的 `vptr` 指向的是**基类的虚函数表**。所以调用的永远是基类自己的虚函数。
     2. **在析构函数中**：对象的析构是从子类向基类进行的。当执行到基类的析构函数时，子类部分已经被销毁了，此时 `vptr` 被降级指回了基类的虚函数表。调用的同样是基类自己的虚函数。
     如果强行发生多态，去调用子类的函数，子类函数可能会访问尚未初始化或已被销毁的成员变量，导致严重崩溃。”
+    结合代码看会更直观：
+    ```cpp
+    #include <iostream>
+
+    class Base {
+    public:
+        Base() {
+            std::cout << "Base ctor: ";
+            foo(); // 不会动态绑定到 Derived::foo()
+        }
+
+        virtual ~Base() {
+            std::cout << "Base dtor: ";
+            foo(); // 不会动态绑定到 Derived::foo()
+        }
+
+        virtual void foo() {
+            std::cout << "Base::foo\n";
+        }
+    };
+
+    class Derived : public Base {
+    public:
+        Derived() {
+            std::cout << "Derived ctor\n";
+        }
+
+        ~Derived() override {
+            std::cout << "Derived dtor\n";
+        }
+
+        void foo() override {
+            std::cout << "Derived::foo\n";
+        }
+    };
+
+    int main() {
+        Base* p = new Derived();
+        delete p;
+    }
+    ```
+    典型输出：
+    ```text
+    Base ctor: Base::foo
+    Derived ctor
+    Derived dtor
+    Base dtor: Base::foo
+    ```
+    这说明：创建 `Derived` 对象时，先执行 `Base` 构造函数，此时 `Derived` 部分还没构造完成，所以构造函数里的虚函数调用只会落到 `Base::foo()`；销毁对象时，先执行 `Derived` 析构函数，再执行 `Base` 析构函数，进入 `Base` 析构函数时 `Derived` 部分已经销毁，所以析构函数里的虚函数调用也只会落到 `Base::foo()`。
+
+    **面试追问 1：`Base::foo()` 本身是虚函数，会不会导致 Crash？**
+
+    不会。`foo()` 是虚函数，不代表调用它一定会动态绑定到子类。构造和析构阶段比较特殊：
+    ```cpp
+    Base::Base() {
+        foo(); // 这里调用 Base::foo()
+    }
+
+    Base::~Base() {
+        foo(); // 这里也调用 Base::foo()
+    }
+    ```
+    只要 `Base::foo()` 自己有正常实现，这个调用就是普通函数调用，不会因为它是 `virtual` 就崩溃。真正危险的是：你误以为这里会调用 `Derived::foo()`，于是把必须由子类完成的初始化或清理逻辑放进虚函数里。
+
+    **面试追问 2：如果 `Base::foo()` 没有默认实现呢？**
+
+    如果 `Base::foo()` 是纯虚函数：
+    ```cpp
+    class Base {
+    public:
+        Base() {
+            foo(); // 危险：不会调用 Derived::foo()
+        }
+
+        virtual void foo() = 0;
+    };
+    ```
+    构造 `Derived` 时会先进入 `Base::Base()`，此时 `Derived` 部分还没构造完成，虚函数不会派发到 `Derived::foo()`；而 `Base::foo()` 又是纯虚函数，没有可执行实现，所以通常会触发运行时错误，例如 `pure virtual method called`，然后程序终止。
+
+    注意：纯虚函数也可以在类外提供函数体：
+    ```cpp
+    class Base {
+    public:
+        virtual void foo() = 0;
+    };
+
+    void Base::foo() {
+        std::cout << "Base default behavior\n";
+    }
+    ```
+    但这不改变结论：构造/析构函数中不要依赖虚函数多态。工程上更推荐把构造期间必须执行的逻辑写成普通成员函数，或者交给工厂函数、显式 `init()` 流程处理。
+
+    **面试追问 3：父类虚函数表和子类虚函数表分别怎么存？**
+
+    虚函数表通常不是存在对象里，而是存在程序的静态存储区域；对象里通常只保存一个隐藏的 `vptr`，指向当前动态类型对应的虚函数表。
+    ```cpp
+    class Base {
+    public:
+        virtual void f();
+        virtual void g();
+    };
+
+    class Derived : public Base {
+    public:
+        void f() override;
+        virtual void h();
+    };
+    ```
+    概念上可以理解为：
+    ```text
+    Base vtable:
+    +-------------+
+    | &Base::f    |
+    | &Base::g    |
+    +-------------+
+
+    Derived vtable:
+    +-------------+
+    | &Derived::f |  // override：替换原槽位
+    | &Base::g    |  // 未 override：沿用父类实现
+    | &Derived::h |  // 新增 virtual：追加新槽位
+    +-------------+
+    ```
+    对象布局可以粗略理解为：
+    ```text
+    Base object:
+    +----------------+
+    | vptr ----------+----> Base vtable
+    | Base members   |
+    +----------------+
+
+    Derived object:
+    +----------------+
+    | vptr ----------+----> Derived vtable
+    | Base members   |
+    | Derived members|
+    +----------------+
+    ```
+    容易搞错的点：
+    1. **不是每个对象都有一张 vtable**：通常是每个多态类一张 vtable，多个同类型对象共享同一张表。
+    2. **vtable 不在对象内部**：对象里通常只有 `vptr`，不是把整张虚函数表塞进对象。
+    3. **override 不新增槽位**：覆盖父类虚函数时，是替换父类对应槽位里的函数地址。
+    4. **新增虚函数才追加槽位**：子类新增的 `virtual h()` 通常会追加到子类 vtable 后面。
+    5. **vptr/vtable 是主流实现，不是标准强制内存格式**：单继承下通常比较直观，多继承、虚继承下可能有多个 `vptr`、多个 vtable 片段和 `this` 指针调整。
+
+    **面试追问 4：析构时子类虚函数表是怎么“退化”的？**
+
+    准确说，不是子类虚函数表被修改或退化，而是对象内部的 `vptr` 在析构链中被逐层改写。
+    ```cpp
+    class Base {
+    public:
+        virtual ~Base() {
+            std::cout << "Base dtor: ";
+            foo();
+        }
+
+        virtual void foo() {
+            std::cout << "Base::foo\n";
+        }
+    };
+
+    class Derived : public Base {
+    public:
+        ~Derived() override {
+            std::cout << "Derived dtor: ";
+            foo();
+        }
+
+        void foo() override {
+            std::cout << "Derived::foo\n";
+        }
+    };
+    ```
+    典型输出：
+    ```text
+    Derived dtor: Derived::foo
+    Base dtor: Base::foo
+    ```
+    析构过程可以这样理解：
+    ```text
+    进入 Derived::~Derived()
+    对象的 vptr -> Derived vtable
+    foo() -> Derived::foo
+
+    Derived::~Derived() 执行完
+    Derived 自己的成员开始销毁
+
+    进入 Base::~Base()
+    对象的 vptr -> Base vtable
+    foo() -> Base::foo
+    ```
+    所以，“退化”的不是 vtable 本身，`Derived vtable` 和 `Base vtable` 都还在；变化的是对象里的 `vptr`。进入哪一层构造/析构函数，对象就被当作哪一层类型看待，虚函数最多只派发到当前这一层。
 
 ### 3. 线程安全的单例模式
 **面试官**：如何在 C++ 中实现一个绝对线程安全的单例模式（Singleton）？
