@@ -1,0 +1,21 @@
+av_interview/项目/直播性能优化_面试官追问.md
+  s_f78521dbe7804a::t_d951f5d9cfcd3a 97-119
+av_interview/项目/预览延时优化_面试官追问.md
+  s_f78521dbe7804a::t_22430d7fb9bb25 102-139
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "7a7527de8dbf4475d3107d93504cf658b8679658",
+  "prompts": {},
+  "sessions": {
+    "s_f78521dbe7804a": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "552d6f9a-ca53-421e-addf-d6a7f8572ed7",
+        "model": "gpt-5.5"
+      },
+      "human_author": "dumenglin <dumenglin@insta360.com>"
+    }
+  }
+}
