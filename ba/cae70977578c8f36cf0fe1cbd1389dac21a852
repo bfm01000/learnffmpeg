@@ -1,0 +1,19 @@
+Doc/OC/OC面试高频考点与标准回答大全.md
+  s_1a666fe24ccb61::t_462593f3520d8b 1-87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "bacae70977578c8f36cf0fe1cbd1389dac21a852",
+  "prompts": {},
+  "sessions": {
+    "s_1a666fe24ccb61": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "1039c949-caf5-4561-8432-48a5e08ddc71",
+        "model": "gemini-3.1-pro"
+      },
+      "human_author": "dumenglin <dumenglin@insta360.com>"
+    }
+  }
+}
