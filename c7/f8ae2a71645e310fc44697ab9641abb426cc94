@@ -1,0 +1,38 @@
+av_interview/项目/直播性能优化_面试官追问.md
+  s_f78521dbe7804a::t_aadf2e783292ea 91-105
+Doc/常见问题解决方案/SDK回调.md
+  s_1a666fe24ccb61::t_02ab153b85dc99 424-492
+  s_1a666fe24ccb61::t_8cb48f2e40b0a2 52-104,130
+  s_1a666fe24ccb61::t_f9f9d582b96f47 236-281,301,322
+  s_1a666fe24ccb61::t_03931cfe5c5c24 282-292
+  s_1a666fe24ccb61::t_5d227722107277 105-129
+  s_1a666fe24ccb61::t_4855a277b1c02b 293-300,302-321
+  s_1a666fe24ccb61::t_95e438661ea9d7 140-225,227-232
+  s_1a666fe24ccb61::t_4650c50cdb5a76 226
+Doc/常见问题解决方案/TLS与JNI线程销毁解析.md
+  s_1a666fe24ccb61::t_f835c80e6e0e1e 1-102
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "c7f8ae2a71645e310fc44697ab9641abb426cc94",
+  "prompts": {},
+  "sessions": {
+    "s_1a666fe24ccb61": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "1039c949-caf5-4561-8432-48a5e08ddc71",
+        "model": "gemini-3.1-pro"
+      },
+      "human_author": "dumenglin <dumenglin@insta360.com>"
+    },
+    "s_f78521dbe7804a": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "552d6f9a-ca53-421e-addf-d6a7f8572ed7",
+        "model": "gpt-5.5"
+      },
+      "human_author": "dumenglin <dumenglin@insta360.com>"
+    }
+  }
+}
