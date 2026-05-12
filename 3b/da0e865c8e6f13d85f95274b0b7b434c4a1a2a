@@ -1,0 +1,30 @@
+Doc/设计模式/设计模式高频考点与项目实战回答.md
+  s_1a666fe24ccb61::t_65a167430edcfd 1-42,86-112
+  s_1a666fe24ccb61::t_4d135c66534c18 43-85
+Doc/设计模式/观察者模式详解.md
+  s_1a666fe24ccb61::t_44e362481c9581 1-46,114-115,117,153,181-208
+  s_1a666fe24ccb61::t_6d821c5356561c 47-48,50,55,60-61,64,66,75-76,79,81-82,87-90,92-94,99-100,102,104-105,108-113
+  s_1a666fe24ccb61::t_30364f80af9999 49,51-54,56-59,62-63,65,67-74,77-78,80,83-86,91,95-98,101,103,106-107
+  s_1a666fe24ccb61::t_ba4e3f20a2a4f2 116,118-152,154-180
+Doc/VibeCoding/AI_Coding面试指南.md
+  s_1a666fe24ccb61::t_4d6027d0a52012 1-19,23-37,48-60,64-100
+  s_1a666fe24ccb61::t_2981dea410c097 61-63
+  s_1a666fe24ccb61::t_4cd0c441e926d6 20-22
+  s_1a666fe24ccb61::t_1bcdec1f898178 38-47
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "3bda0e865c8e6f13d85f95274b0b7b434c4a1a2a",
+  "prompts": {},
+  "sessions": {
+    "s_1a666fe24ccb61": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "1039c949-caf5-4561-8432-48a5e08ddc71",
+        "model": "gemini-3.1-pro"
+      },
+      "human_author": "dumenglin <dumenglin@insta360.com>"
+    }
+  }
+}
