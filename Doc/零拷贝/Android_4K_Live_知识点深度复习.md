@@ -59,6 +59,7 @@
     *   **优势**：此时 GPU 会发挥它成百上千个流处理器的并发优势，用极高的效率并行完成 De-tiling 的数学重排。并且这个过程是**完全异步**的！CPU 下达命令后立刻返回去干别的事，等下一帧再去映射（`glMapBuffer`）这个 PBO 拿数据。
     *   **结果**：CPU 的阻塞耗时可以从 20ms 骤降到 1~2ms。
     *   **局限**：拿回 CPU 的依然是庞大的 RGBA 数据（30MB），CPU 还是得苦逼地跑 `libyuv` 去转成 YUV420P。
+    *   **辨析**：传统 `glReadPixels` 与 PBO「阶段一」并不是「CPU 算像素 vs GPU 算像素」的对立；**分工与同步模型** 的准确表述与代码对照见下文 **§3.1**。
 
 *   **阶段二：GPU Shader 格式转换 + PBO 回读（曾经的极致优化机密）**
     *   **原理**：既然拿回 RGBA 太大，那能不能在 GPU 里就把它变成 YUV？在渲染最后一步，写一个 Fragment Shader（片段着色器）或者 Compute Shader（计算着色器），在 GPU 内部直接用矩阵乘法把 RGBA 实时转成 YUV420P 的格式，然后再用 PBO 读回 CPU。
@@ -72,6 +73,101 @@
         *   **零带宽浪费**：“阶段二”将 10.5MB 拿回 CPU 再喂给 VPU，这会在内存总线（Memory Bus）上产生 `10.5MB * 2 = 21MB` 的“折返跑”。如果是 30fps，每秒总线被无端消耗 **630MB/s** 的带宽。而“阶段三”只传句柄，总线带宽浪费为 **0**。
         *   **杜绝温控降频**：高频内存总线是手机最大的发热源之一。每秒 630MB/s 的冗余传输会迅速触发系统温控阈值（Thermal Throttling），导致 CPU/GPU 被强制降频，从而导致了推流 10 分钟后帧率从 30fps 雪崩到 5fps。彻底斩断这条多余的传输链后，设备发热显著降低，能够实现真正的长时间满帧推流。
     *   **结果**：彻底消除“折返跑”，建立了 **“GPU -> VPU”** 的高速直连。不搬运数据，只传指针；无需 CPU 参与，也无需强行转换为 CPU 喜欢的 Linear 布局。这才是真正榨干系统异构算力的终极解决方案。
+
+### 3.1 补充：`glReadPixels` 谁在干活？与「阶段一 PBO」的本质差别（含代码）
+
+上面「阶段一」容易让人误解成：传统 `glReadPixels` 是 CPU 在算像素，PBO 才换成 GPU。更准确的说法如下。
+
+#### （1）分工：不是二选一，而是「硬件干活 + CPU 线程何时阻塞」
+
+*   **Resolve / De-tiling / 经总线搬到某块内存**：在移动端 TBDR 等架构上，通常由 **GPU / 显示与内存子系统 / DMA** 完成，并不是 CPU 用循环去「抠像素」。
+*   **`glReadPixels` 传入用户态指针时**：调用线程往往在 **API 返回前一直等到读回完成** —— 即 **CPU 在同步阻塞等待**，数据最终落在 **你传入的那段 CPU 可见内存**。
+*   **小结**：面试里可以一句话收束 —— **重活多在 GPU 侧排队执行；传统路径的痛点是「CPU 线程在 `glReadPixels` 上傻等整段读回」+「大块数据必须进 CPU 内存」。**
+
+#### （2）本质差别：PBO 改变的是「同步模型」与「能否和渲染交错」
+
+| 维度 | 典型 `glReadPixels` → 用户态 buffer | 阶段一：`GL_PIXEL_PACK_BUFFER` + PBO（常配合双缓冲） |
+|------|-------------------------------------|------------------------------------------------------|
+| **数据落点** | 直接写入 **CPU 侧** `std::vector` / `malloc` 缓冲 | 先写入 **PBO（GPU 可寻址的 pack buffer）**，CPU 再 `glMapBufferRange` 触碰 |
+| **同步** | 往往在 **同一次调用** 内就要拿到完整结果 → **长时间阻塞** | 把「发起读回」与「CPU 读内存」拆开，用 **双/三缓冲** 让 **上一帧 map** 与 **本帧渲染 + ReadPixels** **流水线重叠** |
+| **面试表述** | 「排队 + resolve + 搬运」与 **当前线程返回** 绑得很紧 | **缩短/后移** 关键路径上的阻塞；**异步的是提交与流水线**，**真正读 CPU 仍有同步点**（多在 `glMapBufferRange`） |
+
+因此：**阶段一并不是把「搬运从 CPU 换成 GPU」**，而是 **把阻塞从「紧耦合在 `glReadPixels`」挪开，并用多缓冲与下一帧工作重叠**，文档里写的「CPU 阻塞从约 20ms 降到约 1～2ms」指的是这种 **线程等待形态** 的改善（具体数值随分辨率、驱动、是否 PACK_BUFFER 等变化，以 Profiler 为准）。
+
+#### （3）代码对照（OpenGL ES 3.x 思路）
+
+**路径 A：传统读回（一步里等完）**
+
+```cpp
+// FBO 已绑定为 GL_READ_FRAMEBUFFER；RGBA8，尺寸 w x h
+void frame_traditional(int w, int h) {
+    const size_t bytes = (size_t)w * h * 4;
+    std::vector<uint8_t> cpu_rgba(bytes);
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
+    // 很多驱动下：当前线程在此阻塞，直到 resolve + 搬运到 cpu_rgba 完成
+    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, cpu_rgba.data());
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+
+    // 仅当 glReadPixels 返回后，下面才安全
+    // libyuv::ABGRToI420(...);
+}
+```
+
+**路径 B：PBO 双缓冲（先读到 PBO，下一帧再 map 上一帧）**
+
+```cpp
+class PboReadback {
+    GLuint pbo_[2]{};
+    int w_{}, h_{}, idx_{};
+
+public:
+    void init(int w, int h) {
+        w_ = w;
+        h_ = h;
+        glGenBuffers(2, pbo_);
+        const GLsizeiptr bytes = (GLsizeiptr)w * h * 4;
+        for (int i = 0; i < 2; ++i) {
+            glBindBuffer(GL_PIXEL_PACK_BUFFER, pbo_[i]);
+            glBufferData(GL_PIXEL_PACK_BUFFER, bytes, nullptr, GL_STREAM_READ);
+        }
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    }
+
+    void shutdown() { glDeleteBuffers(2, pbo_); }
+
+    void frame() {
+        const GLsizeiptr bytes = (GLsizeiptr)w_ * h_ * 4;
+        const int write_idx = idx_;
+        const int read_idx = 1 - idx_;
+
+        // 1) 取「上一帧」已读进 PBO 的数据（CPU 长等待多发生在这里）
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, pbo_[read_idx]);
+        if (void* ptr = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, bytes, GL_MAP_READ_BIT)) {
+            // libyuv::ABGRToI420(..., ptr, ...);
+            glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+        }
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+
+        // 2) 渲染本帧（示意）
+        // glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbo); draw...
+
+        // 3) 本帧读回到 write_idx 的 PBO（PACK 绑定时，最后参数为 PBO 内字节偏移）
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, pbo_[write_idx]);
+        glReadPixels(0, 0, w_, h_, GL_RGBA, GL_UNSIGNED_BYTE, (void*)(uintptr_t)0);
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+
+        idx_ = read_idx;
+    }
+};
+```
+
+**路径 C（可选）：`glFenceSync` 把「能否安全 map」说严谨**
+
+双缓冲不保证「上一帧 GPU 一定读完 PBO」，`glMapBufferRange` 仍可能阻塞。可在 `glReadPixels` 之后插 `glFenceSync`，在 map 前用 `glClientWaitSync`（或先 `timeout=0` 探测）明确同步边界，便于表述：**异步的是命令提交与流水线重叠；CPU 真正消费像素仍有显式同步点。**
+
 ---
 
 ## 四、 深入 AHardwareBuffer 与 Gralloc 协商机制
