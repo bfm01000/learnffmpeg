@@ -1,0 +1,1619 @@
+# C++ 继承、多态与多继承：面试速记与底层原理详解
+
+> **适用方向**：C++ 基础、Android / iOS Native、音视频开发、客户端架构、服务端开发  
+> **难度**：⭐⭐⭐⭐  
+> **预计阅读**：速记 10 分钟｜全文 45 分钟  
+> **关联知识**：`虚函数.md`、`重要-内存管理.md`、`C++锁面试速记与原理详解.md`
+
+---
+
+## 第一部分：面试常问问题放前面
+
+### 1. 什么是继承？C++ 为什么要有继承？
+
+**答：** 继承是 C++ 面向对象的三大特性之一，用来表达类与类之间的 **is-a** 关系。子类可以复用父类的数据成员和成员函数，并在此基础上扩展或改写行为。
+
+例如 `Dog` 是一种 `Animal`，所以可以让 `Dog` 继承 `Animal`。
+
+```cpp
+class Animal {
+public:
+    void eat() {}
+};
+
+class Dog : public Animal {
+public:
+    void bark() {}
+};
+```
+
+继承主要解决两个问题：
+
+1. **代码复用**：公共属性和行为放到基类，子类不用重复写。
+2. **抽象建模**：用基类描述共同接口，用子类描述不同实现。
+
+但面试里要注意：继承不是为了“偷懒复用代码”而滥用，它更重要的是表达抽象关系。能用组合解决的问题，不一定要用继承。
+
+---
+
+### 2. C++ 继承有哪几种方式？public、protected、private 继承有什么区别？
+
+**答：** C++ 有三种继承方式：`public`、`protected`、`private`。它们决定的是 **基类成员在派生类中的访问级别如何变化**。
+
+| 继承方式 | 基类 public 成员在子类中 | 基类 protected 成员在子类中 | 基类 private 成员 |
+|---|---|---|---|
+| `public` 继承 | 仍是 public | 仍是 protected | 不可直接访问 |
+| `protected` 继承 | 变成 protected | 仍是 protected | 不可直接访问 |
+| `private` 继承 | 变成 private | 变成 private | 不可直接访问 |
+
+最常见的是 `public` 继承，因为它表达标准的 **is-a** 关系。
+
+```cpp
+class Base {
+public:
+    int a;
+protected:
+    int b;
+private:
+    int c;
+};
+
+class Derived : public Base {
+public:
+    void test() {
+        a = 1; // 可以访问
+        b = 2; // 可以访问
+        // c = 3; // 错误：private 成员不可直接访问
+    }
+};
+```
+
+一句话记忆：
+
+> `public` 继承保留接口，`protected` 继承收窄接口给子类，`private` 继承把基类当成实现细节。
+
+---
+
+### 3. 继承和组合怎么选？
+
+**答：** 如果两个类是 **is-a** 关系，用继承；如果是 **has-a / use-a** 关系，用组合。
+
+```cpp
+class Engine {};
+
+class Car {
+private:
+    Engine engine; // Car has an Engine，组合更合适
+};
+```
+
+常见判断：
+
+- `Dog is an Animal`：适合继承。
+- `Car has an Engine`：适合组合。
+- `Player uses AudioDecoder`：适合组合。
+
+工程上更推荐一句话：
+
+> 优先组合，谨慎继承。继承会把父类的接口、生命周期、对象模型都暴露给子类，耦合更强。
+
+---
+
+### 4. 什么是多态？C++ 多态分几种？
+
+**答：** 多态就是“同一个调用，在不同对象上表现出不同的行为”。
+
+C++ 主要有两类多态：
+
+| 类型 | 发生时期 | 实现方式 | 典型例子 |
+|---|---|---|---|
+| 静态多态 | 编译期 | 函数重载、运算符重载、模板 | `print(int)` / `print(string)` |
+| 动态多态 | 运行期 | 继承 + 虚函数 + 基类指针/引用 | `Animal* p = new Dog; p->speak();` |
+
+面试里说“C++ 多态”时，通常重点问的是 **动态多态**。
+
+动态多态必须满足三个条件：
+
+1. 有继承关系。
+2. 基类函数声明为 `virtual`。
+3. 通过基类指针或基类引用调用虚函数。
+
+```cpp
+class Animal {
+public:
+    virtual void speak() {
+        cout << "Animal speak" << endl;
+    }
+};
+
+class Dog : public Animal {
+public:
+    void speak() override {
+        cout << "Dog speak" << endl;
+    }
+};
+
+void test(Animal& animal) {
+    animal.speak(); // 运行期根据真实对象类型调用
+}
+```
+
+---
+
+### 5. 虚函数的底层原理是什么？
+
+**答：** 虚函数底层通常通过 **虚函数表 vtable** 和 **虚表指针 vptr** 实现。
+
+如果一个类包含虚函数，编译器通常会为这个类生成一张虚函数表，表里存放虚函数的真实地址。同时每个对象内部会多出一个隐藏指针 `vptr`，指向当前类对应的虚函数表。
+
+调用 `base->func()` 时，大致流程是：
+
+1. 通过对象地址取出 `vptr`。
+2. 通过 `vptr` 找到虚函数表。
+3. 根据函数在虚表中的偏移找到真实函数地址。
+4. 跳转调用。
+
+这也是动态多态比普通函数调用多一点开销的原因：多了一次或多次间接寻址，而且可能影响编译器内联优化。
+
+---
+
+### 6. 为什么基类析构函数通常要写成 virtual？
+
+**答：** 只要这个基类可能被当作多态基类使用，也就是可能出现 `delete Base*` 删除子类对象，就必须把基类析构函数写成虚函数。
+
+```cpp
+class Base {
+public:
+    virtual ~Base() = default;
+};
+
+class Derived : public Base {
+private:
+    int* data = new int[100];
+
+public:
+    ~Derived() override {
+        delete[] data;
+    }
+};
+
+Base* p = new Derived();
+delete p; // 正确：先调 Derived 析构，再调 Base 析构
+```
+
+如果 `Base` 的析构函数不是虚函数，`delete p` 时只会静态绑定到 `Base::~Base()`，子类析构函数可能不执行，导致资源泄漏。
+
+标准回答：
+
+> 作为多态基类时，析构函数必须是 virtual，否则通过基类指针释放派生类对象会产生未定义行为，常见后果是派生类资源没有被释放。
+
+---
+
+### 7. 构造函数可以是虚函数吗？构造函数里调用虚函数会发生什么？
+
+**答：** 构造函数不能是虚函数。
+
+原因有两层：
+
+1. 语义上，虚函数依赖“对象已经形成后的真实类型”，但构造函数执行时对象还没有完整构造好。
+2. 底层上，`vptr` 是在构造过程中逐步设置的，构造函数执行前没有完整可用的动态类型信息。
+
+构造函数或析构函数里可以调用虚函数，但不会表现出你期望的多态。
+
+```cpp
+class Base {
+public:
+    Base() {
+        foo(); // 调用 Base::foo，不会调用 Derived::foo
+    }
+
+    virtual void foo() {
+        cout << "Base foo" << endl;
+    }
+};
+
+class Derived : public Base {
+public:
+    void foo() override {
+        cout << "Derived foo" << endl;
+    }
+};
+```
+
+构造 `Derived` 时，先构造 `Base` 部分，此时对象身份还是 `Base`，所以调用的是 `Base::foo()`。
+
+---
+
+### 8. 重载、重写、隐藏有什么区别？
+
+**答：**
+
+| 概念 | 英文 | 发生位置 | 要求 |
+|---|---|---|---|
+| 重载 | overload | 同一作用域 | 函数名相同，参数列表不同 |
+| 重写 | override | 父子类之间 | 基类函数是 virtual，子类函数签名兼容 |
+| 隐藏 | hide | 父子类之间 | 子类函数名与父类相同，会隐藏父类同名函数 |
+
+```cpp
+class Base {
+public:
+    virtual void show(int) {}
+    void print(int) {}
+};
+
+class Derived : public Base {
+public:
+    void show(int) override {} // 重写
+    void print(double) {}      // 隐藏 Base::print(int)，不是重载
+};
+```
+
+常见坑：
+
+```cpp
+Derived d;
+d.print(1); // 调用 Derived::print(double)，Base::print(int) 被隐藏
+```
+
+如果想把父类同名函数引入子类作用域：
+
+```cpp
+class Derived : public Base {
+public:
+    using Base::print;
+    void print(double) {}
+};
+```
+
+---
+
+### 9. override 和 final 有什么作用？
+
+**答：**
+
+- `override`：告诉编译器这个函数必须重写基类虚函数，如果签名写错就报错。
+- `final`：禁止某个虚函数继续被重写，或者禁止某个类继续被继承。
+
+```cpp
+class Base {
+public:
+    virtual void run() {}
+};
+
+class Derived final : public Base {
+public:
+    void run() override final {}
+};
+```
+
+工程上强烈建议：只要重写虚函数，就写 `override`。
+
+它可以防止这种低级错误：
+
+```cpp
+class Base {
+public:
+    virtual void process(int) {}
+};
+
+class Derived : public Base {
+public:
+    void process(double) {} // 没有 override 时，这不是重写，而是隐藏
+};
+```
+
+---
+
+### 10. 什么是对象切片？
+
+**答：** 对象切片是指把派生类对象按值赋给基类对象时，派生类特有部分被切掉，只剩下基类子对象。
+
+```cpp
+class Base {
+public:
+    virtual void foo() {}
+};
+
+class Derived : public Base {
+public:
+    int x = 100;
+};
+
+Derived d;
+Base b = d; // 对象切片：Derived 中的 x 丢失
+```
+
+避免方式：
+
+- 多态场景用基类指针或引用。
+- 管理所有权时用 `std::unique_ptr<Base>` 或 `std::shared_ptr<Base>`。
+- 不要把多态对象按值传递。
+
+```cpp
+void handle(Base& obj);              // 推荐
+void handle(std::unique_ptr<Base> p); // 管理所有权时推荐
+```
+
+---
+
+### 11. 多继承是什么？有什么问题？
+
+**答：** 多继承是一个类同时继承多个基类。
+
+```cpp
+class Camera {
+public:
+    virtual void openCamera() {}
+};
+
+class Microphone {
+public:
+    virtual void openMic() {}
+};
+
+class LiveDevice : public Camera, public Microphone {};
+```
+
+多继承可以表达“一个对象同时具备多种能力”，但它会带来更复杂的对象布局、二义性、菱形继承、多个 `vptr`、指针调整等问题。
+
+所以工程建议是：
+
+> 多继承可以用于“多个纯接口”的组合，但不要轻易继承多个带状态、带实现的基类。
+
+---
+
+### 12. 什么是菱形继承？虚继承解决什么问题？
+
+**答：** 菱形继承是指两个中间类继承同一个基类，最终派生类又同时继承这两个中间类。
+
+```cpp
+class A {
+public:
+    int value;
+};
+
+class B : public A {};
+class C : public A {};
+class D : public B, public C {};
+```
+
+此时 `D` 里有两份 `A` 子对象：
+
+```cpp
+D d;
+// d.value = 1; // 错误：不知道访问 B::A::value 还是 C::A::value
+d.B::value = 1;
+d.C::value = 2;
+```
+
+如果希望 `D` 中只有一份公共的 `A`，就要使用虚继承：
+
+```cpp
+class B : virtual public A {};
+class C : virtual public A {};
+class D : public B, public C {};
+```
+
+虚继承解决的是：
+
+1. 菱形继承中公共基类重复存储的问题。
+2. 访问公共基类成员时的二义性问题。
+
+代价是对象布局更复杂，访问虚基类成员时通常需要额外的指针或偏移查找。
+
+---
+
+### 13. 多继承下为什么需要 this 指针调整？
+
+**答：** 多继承下，一个派生类对象内部通常包含多个基类子对象，每个基类子对象在派生类对象中的偏移不同。
+
+```cpp
+class A {
+public:
+    int a;
+};
+
+class B {
+public:
+    int b;
+};
+
+class C : public A, public B {
+public:
+    int c;
+};
+```
+
+对象布局可以简单理解为：
+
+```text
+C object:
++----------------+
+| A subobject    |  offset 0
+|   int a        |
++----------------+
+| B subobject    |  offset sizeof(A)
+|   int b        |
++----------------+
+| int c          |
++----------------+
+```
+
+当 `C*` 转成 `A*` 时，地址可能不变；当 `C*` 转成 `B*` 时，指针要加上 `B` 子对象的偏移。
+
+```cpp
+C obj;
+C* pc = &obj;
+A* pa = pc; // 通常地址不变
+B* pb = pc; // 地址会调整到 B 子对象起始位置
+```
+
+这就是多继承下的 **指针调整**。如果涉及虚函数调用，编译器还可能通过 thunk 函数修正 `this` 指针，再跳转到真正的函数实现。
+
+---
+
+### 14. 多继承下有几张虚表？几个 vptr？
+
+**答：** 这不是 C++ 标准强制规定的，但主流编译器通常会为每个含虚函数的基类子对象维护对应的虚表指针。
+
+例如：
+
+```cpp
+class A {
+public:
+    virtual void fa() {}
+};
+
+class B {
+public:
+    virtual void fb() {}
+};
+
+class C : public A, public B {
+public:
+    void fa() override {}
+    void fb() override {}
+};
+```
+
+`C` 对象中通常会有两个基类子对象：`A` 部分和 `B` 部分。因为 `A`、`B` 都有虚函数，所以 `C` 对象里通常会有两个 `vptr`：
+
+```text
+C object:
++----------------+
+| A subobject    |
+|   vptr_A       | -> C-as-A vtable
++----------------+
+| B subobject    |
+|   vptr_B       | -> C-as-B vtable
++----------------+
+```
+
+当用 `A*` 调 `fa()`，走 `A` 视角的虚表；当用 `B*` 调 `fb()`，走 `B` 视角的虚表。
+
+---
+
+### 15. 多继承一定不好吗？
+
+**答：** 不是。多继承有合理使用场景，但要控制边界。
+
+适合：
+
+- 继承多个纯接口。
+- Mixin 能力组合。
+- 框架里需要一个类同时满足多个协议。
+
+不适合：
+
+- 多个基类都有复杂状态。
+- 多个基类都有复杂生命周期。
+- 基类之间存在强耦合。
+- 只是为了复用几段代码。
+
+经验判断：
+
+> 多继承用于“多个能力接口”通常可以接受；用于“多个实体父类”要非常谨慎。
+
+---
+
+## 第二部分：继承的核心概念
+
+### 1. 继承表达的是 is-a 关系
+
+继承最自然的语义是“子类是一种父类”。
+
+```cpp
+class Shape {
+public:
+    virtual double area() const = 0;
+    virtual ~Shape() = default;
+};
+
+class Circle : public Shape {
+private:
+    double radius;
+
+public:
+    explicit Circle(double r) : radius(r) {}
+
+    double area() const override {
+        return 3.1415926 * radius * radius;
+    }
+};
+```
+
+这里 `Circle is a Shape`，所以 `Circle` 可以继承 `Shape`。
+
+如果关系读起来不通，就不要硬用继承。例如：
+
+```cpp
+class ThreadPool {};
+
+class VideoEncoder : public ThreadPool {}; // 不合适：编码器不是线程池
+```
+
+更好的写法是组合：
+
+```cpp
+class VideoEncoder {
+private:
+    ThreadPool pool; // 编码器使用线程池
+};
+```
+
+---
+
+### 2. 基类 private 成员不会被子类直接访问，但仍然存在
+
+很多初学者会误解：`private` 成员不能访问，是不是就没有被继承？
+
+不是。
+
+```cpp
+class Base {
+private:
+    int privateValue = 1;
+
+public:
+    int publicValue = 2;
+};
+
+class Derived : public Base {
+private:
+    int derivedValue = 3;
+};
+```
+
+`Derived` 对象里依然包含 `Base` 子对象，`privateValue` 也在对象内存中，只是 `Derived` 的成员函数不能直接访问它。
+
+可以这样理解：
+
+> 访问控制影响的是“能不能写代码访问”，不影响“对象内存里有没有这部分”。
+
+---
+
+### 3. 派生类对象的构造与析构顺序
+
+构造顺序：
+
+1. 先构造基类。
+2. 再构造成员对象。
+3. 最后执行派生类构造函数体。
+
+析构顺序相反：
+
+1. 先执行派生类析构函数体。
+2. 再析构成员对象。
+3. 最后析构基类。
+
+```cpp
+class Base {
+public:
+    Base() { cout << "Base()" << endl; }
+    virtual ~Base() { cout << "~Base()" << endl; }
+};
+
+class Member {
+public:
+    Member() { cout << "Member()" << endl; }
+    ~Member() { cout << "~Member()" << endl; }
+};
+
+class Derived : public Base {
+private:
+    Member member;
+
+public:
+    Derived() { cout << "Derived()" << endl; }
+    ~Derived() override { cout << "~Derived()" << endl; }
+};
+```
+
+输出顺序：
+
+```text
+Base()
+Member()
+Derived()
+~Derived()
+~Member()
+~Base()
+```
+
+---
+
+### 4. 继承中的访问控制
+
+访问控制有两个维度：
+
+1. 基类成员本身是 `public`、`protected`、`private`。
+2. 派生类采用 `public`、`protected`、`private` 哪种继承方式。
+
+一般工程建议：
+
+- 对外稳定接口用 `public`。
+- 只给子类扩展用 `protected`。
+- 内部实现细节用 `private`。
+
+但不要过度使用 `protected` 数据成员。更推荐把数据设为 `private`，通过受控的 `protected` 函数给子类扩展点。
+
+```cpp
+class Base {
+private:
+    int state = 0;
+
+protected:
+    int getState() const {
+        return state;
+    }
+
+    void setState(int value) {
+        state = value;
+    }
+};
+```
+
+原因是：`protected` 数据成员会让所有子类都能直接修改父类内部状态，父类很难维护不变量。
+
+---
+
+## 第三部分：多态的核心概念
+
+### 1. 静态绑定与动态绑定
+
+普通成员函数默认是静态绑定，也叫早绑定。编译器在编译期就决定要调用哪个函数。
+
+```cpp
+class Base {
+public:
+    void foo() {
+        cout << "Base foo" << endl;
+    }
+};
+
+class Derived : public Base {
+public:
+    void foo() {
+        cout << "Derived foo" << endl;
+    }
+};
+
+Base* p = new Derived();
+p->foo(); // Base foo
+delete p;
+```
+
+因为 `foo()` 不是虚函数，所以编译器看的是指针静态类型 `Base*`。
+
+如果改成虚函数：
+
+```cpp
+class Base {
+public:
+    virtual void foo() {
+        cout << "Base foo" << endl;
+    }
+
+    virtual ~Base() = default;
+};
+
+class Derived : public Base {
+public:
+    void foo() override {
+        cout << "Derived foo" << endl;
+    }
+};
+
+Base* p = new Derived();
+p->foo(); // Derived foo
+delete p;
+```
+
+这就是动态绑定：运行时根据对象真实类型调用。
+
+---
+
+### 2. 多态接口通常长什么样？
+
+多态接口通常是一个抽象基类：
+
+```cpp
+class Decoder {
+public:
+    virtual ~Decoder() = default;
+    virtual bool open(const string& path) = 0;
+    virtual bool decodeFrame() = 0;
+    virtual void close() = 0;
+};
+```
+
+不同子类实现不同平台或不同格式：
+
+```cpp
+class FFmpegDecoder : public Decoder {
+public:
+    bool open(const string& path) override;
+    bool decodeFrame() override;
+    void close() override;
+};
+
+class MediaCodecDecoder : public Decoder {
+public:
+    bool open(const string& path) override;
+    bool decodeFrame() override;
+    void close() override;
+};
+```
+
+调用方只依赖抽象：
+
+```cpp
+void play(Decoder& decoder) {
+    while (decoder.decodeFrame()) {
+        // render frame
+    }
+}
+```
+
+这样做的好处是：调用方不关心具体解码器是谁，只关心它能不能按统一接口工作。
+
+---
+
+### 3. 纯虚函数与抽象类
+
+纯虚函数写法：
+
+```cpp
+virtual void draw() = 0;
+```
+
+包含至少一个纯虚函数的类叫抽象类，不能直接实例化。
+
+```cpp
+class Shape {
+public:
+    virtual ~Shape() = default;
+    virtual void draw() = 0;
+};
+
+// Shape s; // 错误：抽象类不能实例化
+```
+
+抽象类的作用不是创建对象，而是定义协议。
+
+---
+
+### 4. 接口类的推荐写法
+
+如果一个类主要作为接口，建议这样写：
+
+```cpp
+class IRenderer {
+public:
+    virtual ~IRenderer() = default;
+
+    virtual void init() = 0;
+    virtual void render() = 0;
+    virtual void release() = 0;
+};
+```
+
+注意点：
+
+1. 析构函数必须是 `virtual`。
+2. 接口函数通常是纯虚函数。
+3. 尽量不要在接口类里放数据成员。
+4. 如果需要默认实现，可以谨慎提供非纯虚函数或 protected helper。
+
+---
+
+## 第四部分：继承和多态的底层对象模型
+
+### 1. 单继承且没有虚函数的对象布局
+
+```cpp
+class Base {
+public:
+    int a;
+};
+
+class Derived : public Base {
+public:
+    int b;
+};
+```
+
+可以简单理解为：
+
+```text
+Derived object:
++----------------+
+| Base::a        |
++----------------+
+| Derived::b     |
++----------------+
+```
+
+`Derived` 对象中包含一个完整的 `Base` 子对象。
+
+---
+
+### 2. 单继承且有虚函数的对象布局
+
+```cpp
+class Base {
+public:
+    int a;
+    virtual void foo() {}
+};
+
+class Derived : public Base {
+public:
+    int b;
+    void foo() override {}
+};
+```
+
+主流编译器下可以理解为：
+
+```text
+Derived object:
++----------------+
+| vptr           | -> Derived vtable
++----------------+
+| Base::a        |
++----------------+
+| Derived::b     |
++----------------+
+```
+
+`vptr` 通常放在对象起始位置，但这不是 C++ 标准强制规定的，属于 ABI 实现细节。
+
+虚表大致是：
+
+```text
+Derived vtable:
++-----------------------+
+| &Derived::foo         |
++-----------------------+
+```
+
+---
+
+### 3. 为什么虚函数调用比普通函数慢一点？
+
+普通函数调用：
+
+```text
+call fixed_address
+```
+
+虚函数调用：
+
+```text
+load vptr from object
+load function address from vtable
+call function_address
+```
+
+多出来的成本主要是：
+
+1. 一次间接寻址。
+2. 间接调用可能影响 CPU 分支预测。
+3. 编译器更难内联。
+
+但工程上不要夸大这个开销。绝大多数业务场景里，虚函数开销远小于 I/O、锁竞争、内存分配、网络、编解码等成本。
+
+真正需要谨慎的是高频内层循环，例如图像像素级处理、音频 sample 级处理、游戏引擎热路径等。
+
+---
+
+### 4. vptr 在构造和析构过程中会变化
+
+构造派生类对象时：
+
+1. 先构造基类部分，`vptr` 指向基类虚表。
+2. 再构造派生类部分，`vptr` 调整为派生类虚表。
+
+析构时反过来：
+
+1. 先执行派生类析构，此时还是派生类身份。
+2. 再析构基类部分，`vptr` 调整回基类虚表。
+
+所以构造/析构函数中调用虚函数不会走到最派生类版本。
+
+---
+
+## 第五部分：多继承的底层原理
+
+### 1. 多继承对象布局
+
+```cpp
+class A {
+public:
+    int a;
+};
+
+class B {
+public:
+    int b;
+};
+
+class C : public A, public B {
+public:
+    int c;
+};
+```
+
+对象布局可以理解为：
+
+```text
+C object:
++----------------+
+| A subobject    |
+|   int a        |
++----------------+
+| B subobject    |
+|   int b        |
++----------------+
+| C::c           |
++----------------+
+```
+
+重点是：`C` 不是“同时像 A 和 B”这么简单，而是对象内部真的包含 `A` 子对象和 `B` 子对象。
+
+---
+
+### 2. 多继承下的指针调整
+
+```cpp
+C obj;
+C* pc = &obj;
+A* pa = pc;
+B* pb = pc;
+```
+
+假设 `A` 子对象在 offset 0，`B` 子对象在 offset 4，那么：
+
+```text
+pc = object_start
+pa = object_start + 0
+pb = object_start + 4
+```
+
+所以 `C*` 转成 `B*` 时，编译器必须自动做地址偏移。
+
+这就是为什么 C++ 对象指针不是永远“数值相同”。在多继承下，同一个对象用不同基类指针观察，地址可能不同。
+
+---
+
+### 3. 多继承 + 虚函数：多个 vptr
+
+```cpp
+class A {
+public:
+    virtual void fa() {}
+    int a;
+};
+
+class B {
+public:
+    virtual void fb() {}
+    int b;
+};
+
+class C : public A, public B {
+public:
+    void fa() override {}
+    void fb() override {}
+    int c;
+};
+```
+
+常见实现：
+
+```text
+C object:
++----------------+
+| A subobject    |
+|   vptr_A       | -> C-as-A vtable
+|   int a        |
++----------------+
+| B subobject    |
+|   vptr_B       | -> C-as-B vtable
+|   int b        |
++----------------+
+| int c          |
++----------------+
+```
+
+为什么要多个 `vptr`？
+
+因为 `A*` 和 `B*` 看待同一个 `C` 对象时，它们的起始地址不同、接口集合不同、虚函数表视角也不同。
+
+---
+
+### 4. this 指针修正与 thunk
+
+看一个典型场景：
+
+```cpp
+class A {
+public:
+    virtual void f() {}
+};
+
+class B {
+public:
+    virtual void g() {}
+};
+
+class C : public A, public B {
+public:
+    void g() override {
+        // 这里的 this 必须是 C* 视角
+    }
+};
+```
+
+当你这样调用：
+
+```cpp
+C obj;
+B* pb = &obj;
+pb->g();
+```
+
+`pb` 指向的是 `C` 对象里的 `B` 子对象，不一定是整个 `C` 对象的起始地址。但 `C::g()` 内部的 `this` 需要指向完整的 `C` 对象。
+
+所以编译器可能生成一个小的调整函数，通常叫 thunk：
+
+```text
+B* this  --减去偏移-->  C* this  --调用--> C::g()
+```
+
+你不需要手写这个过程，编译器会自动完成。但面试时要能说明：
+
+> 多继承下通过某个基类指针调用派生类重写函数时，可能需要修正 `this` 指针，因为基类子对象地址不一定等于完整派生类对象地址。
+
+---
+
+### 5. 菱形继承的问题
+
+```cpp
+class A {
+public:
+    int value;
+};
+
+class B : public A {};
+class C : public A {};
+class D : public B, public C {};
+```
+
+`D` 对象里会有两份 `A`：
+
+```text
+D object:
++----------------+
+| B subobject    |
+|   A subobject  |
+|     value      |
++----------------+
+| C subobject    |
+|   A subobject  |
+|     value      |
++----------------+
+```
+
+问题：
+
+1. **数据重复**：`A::value` 有两份。
+2. **访问二义性**：`d.value` 不知道访问哪一份。
+3. **语义混乱**：如果 `A` 表示唯一身份，例如 `Object::id`，重复就非常危险。
+
+---
+
+### 6. 虚继承的底层理解
+
+虚继承写法：
+
+```cpp
+class A {
+public:
+    int value;
+};
+
+class B : virtual public A {};
+class C : virtual public A {};
+class D : public B, public C {};
+```
+
+虚继承让最终派生类 `D` 中只保留一份共享的 `A` 虚基类子对象。
+
+概念布局：
+
+```text
+D object:
++----------------+
+| B subobject    |
+|   vbptr / offset info
++----------------+
+| C subobject    |
+|   vbptr / offset info
++----------------+
+| D members      |
++----------------+
+| shared A       |
+|   value        |
++----------------+
+```
+
+不同编译器实现不同，有的使用 `vbptr` / `vbtable`，有的把虚基类偏移信息放进虚表相关结构里。核心思想相同：
+
+> 虚继承需要在运行时或通过表项找到那一份共享虚基类子对象的位置。
+
+所以虚继承的代价是：
+
+1. 对象体积可能变大。
+2. 访问虚基类成员可能多一次偏移查找。
+3. 构造规则更复杂。
+
+---
+
+### 7. 虚继承下谁负责构造虚基类？
+
+在普通继承中，每一层基类由直接派生类构造。
+
+但虚继承不同：
+
+> 虚基类由最底层的最终派生类负责构造。
+
+```cpp
+class A {
+public:
+    explicit A(int x) {}
+};
+
+class B : virtual public A {
+public:
+    B() : A(1) {}
+};
+
+class C : virtual public A {
+public:
+    C() : A(2) {}
+};
+
+class D : public B, public C {
+public:
+    D() : A(3), B(), C() {}
+};
+```
+
+构造 `D` 时，真正生效的是 `D() : A(3)`。`B()` 和 `C()` 里对 `A` 的构造只在单独构造 `B` 或 `C` 对象时才有意义。
+
+面试回答：
+
+> 虚继承中虚基类只有一份，为了避免多个中间类重复构造，C++ 规定由最派生类负责构造虚基类。
+
+---
+
+## 第六部分：使用场景
+
+### 1. 多态接口隔离平台差异
+
+比如 Android / iOS / 桌面端视频渲染方式不同，但业务层只希望调用统一接口：
+
+```cpp
+class IVideoRenderer {
+public:
+    virtual ~IVideoRenderer() = default;
+    virtual void renderFrame() = 0;
+};
+
+class OpenGLRenderer : public IVideoRenderer {
+public:
+    void renderFrame() override {}
+};
+
+class MetalRenderer : public IVideoRenderer {
+public:
+    void renderFrame() override {}
+};
+```
+
+调用方：
+
+```cpp
+void renderLoop(IVideoRenderer& renderer) {
+    renderer.renderFrame();
+}
+```
+
+---
+
+### 2. 策略模式
+
+继承 + 多态常用于策略模式，把变化的算法封装成一组统一接口。
+
+```cpp
+class EncodeStrategy {
+public:
+    virtual ~EncodeStrategy() = default;
+    virtual void encode() = 0;
+};
+
+class HardwareEncode : public EncodeStrategy {
+public:
+    void encode() override {}
+};
+
+class SoftwareEncode : public EncodeStrategy {
+public:
+    void encode() override {}
+};
+```
+
+适合场景：
+
+- 硬编 / 软编切换。
+- 不同压缩算法切换。
+- 不同网络重传策略切换。
+- 不同缓存淘汰策略切换。
+
+---
+
+### 3. 插件式架构
+
+基类定义插件接口，具体插件动态注册。
+
+```cpp
+class Plugin {
+public:
+    virtual ~Plugin() = default;
+    virtual string name() const = 0;
+    virtual void run() = 0;
+};
+```
+
+这种模式常用于：
+
+- 编解码器插件。
+- 滤镜插件。
+- 数据处理 pipeline。
+- UI 组件扩展。
+
+---
+
+### 4. 多继承用于多个纯接口组合
+
+```cpp
+class IReadable {
+public:
+    virtual ~IReadable() = default;
+    virtual int read(char* buffer, int size) = 0;
+};
+
+class IWritable {
+public:
+    virtual ~IWritable() = default;
+    virtual int write(const char* buffer, int size) = 0;
+};
+
+class Socket : public IReadable, public IWritable {
+public:
+    int read(char* buffer, int size) override;
+    int write(const char* buffer, int size) override;
+};
+```
+
+这里 `Socket` 同时具备读和写两个能力，多继承多个纯接口是比较合理的。
+
+---
+
+## 第七部分：常见坑点
+
+### 1. 基类析构函数不是 virtual
+
+这是 C++ 多态最经典的坑。
+
+```cpp
+class Base {
+public:
+    ~Base() {}
+};
+
+class Derived : public Base {
+public:
+    ~Derived() {}
+};
+
+Base* p = new Derived();
+delete p; // 未定义行为
+```
+
+修正：
+
+```cpp
+class Base {
+public:
+    virtual ~Base() = default;
+};
+```
+
+---
+
+### 2. 忘记写 override，导致本来想重写却变成隐藏
+
+```cpp
+class Base {
+public:
+    virtual void handle(int) {}
+};
+
+class Derived : public Base {
+public:
+    void handle(double) {} // 不是重写
+};
+```
+
+修正：
+
+```cpp
+class Derived : public Base {
+public:
+    void handle(int) override {}
+};
+```
+
+---
+
+### 3. 按值传递多态对象导致对象切片
+
+```cpp
+void process(Base obj) {
+    obj.foo(); // 已经被切成 Base
+}
+```
+
+修正：
+
+```cpp
+void process(Base& obj) {
+    obj.foo();
+}
+```
+
+---
+
+### 4. 在构造或析构函数中依赖多态行为
+
+```cpp
+class Base {
+public:
+    Base() {
+        init(); // 不会调用 Derived::init
+    }
+
+    virtual void init() {}
+};
+```
+
+修正思路：
+
+- 不要在构造函数中调用需要派生类参与的虚函数。
+- 使用二阶段初始化要谨慎，明确生命周期。
+- 更好的方式是把初始化依赖通过构造参数传进基类。
+
+---
+
+### 5. 继承层次过深
+
+继承层次越深，越容易出现：
+
+- 调用链难追踪。
+- 基类改动影响所有子类。
+- 子类依赖基类实现细节。
+- 单元测试困难。
+
+经验建议：
+
+> 如果一个类需要向上翻三四层才能理解行为，继承结构大概率已经过度设计了。
+
+---
+
+### 6. 滥用 protected 数据成员
+
+```cpp
+class Base {
+protected:
+    int state;
+};
+```
+
+所有子类都能随意修改 `state`，基类无法保证状态合法。
+
+推荐：
+
+```cpp
+class Base {
+private:
+    int state = 0;
+
+protected:
+    void updateState(int value) {
+        if (value >= 0) {
+            state = value;
+        }
+    }
+};
+```
+
+---
+
+### 7. 多继承带状态基类导致对象模型复杂
+
+```cpp
+class NetworkClient {
+protected:
+    int fd;
+};
+
+class Logger {
+protected:
+    string tag;
+};
+
+class Service : public NetworkClient, public Logger {};
+```
+
+这不一定错，但如果两个基类都有复杂生命周期，就容易出现构造顺序、析构顺序、资源释放、名字冲突等问题。
+
+更推荐组合：
+
+```cpp
+class Service {
+private:
+    NetworkClient client;
+    Logger logger;
+};
+```
+
+---
+
+### 8. 菱形继承没有使用虚继承
+
+如果公共基类表示唯一身份、公共状态或统一接口，菱形继承不使用虚继承可能导致重复状态。
+
+```cpp
+class Object {
+public:
+    int id;
+};
+
+class View : public Object {};
+class Clickable : public Object {};
+class Button : public View, public Clickable {};
+```
+
+`Button` 里会有两份 `Object::id`，语义通常不对。
+
+修正：
+
+```cpp
+class View : virtual public Object {};
+class Clickable : virtual public Object {};
+class Button : public View, public Clickable {};
+```
+
+---
+
+### 9. dynamic_cast 被滥用
+
+`dynamic_cast` 可以在多态继承体系中做安全向下转型：
+
+```cpp
+Base* base = getObject();
+if (auto* derived = dynamic_cast<Derived*>(base)) {
+    derived->special();
+}
+```
+
+但如果代码里到处都是 `dynamic_cast`，通常说明抽象接口设计不够好。更好的设计是把需要的行为提升到基类虚函数中。
+
+---
+
+### 10. 误以为虚函数一定无法内联
+
+虚函数不是绝对不能内联。
+
+如果编译器能在编译期确定真实类型，仍然可能去虚化并内联：
+
+```cpp
+Derived d;
+d.foo(); // 编译器知道 d 是 Derived
+```
+
+但通过基类指针或引用调用时，通常更难内联：
+
+```cpp
+Base& b = d;
+b.foo(); // 需要动态绑定
+```
+
+---
+
+## 第八部分：面试回答模板
+
+### 模板 1：解释继承
+
+> 继承是 C++ 用来表达 is-a 关系的机制。派生类会包含基类子对象，可以复用基类成员，并在此基础上扩展行为。工程上最常见的是 public 继承，用来保持基类接口对外可见。但继承会带来更强耦合，所以如果只是复用实现，通常优先考虑组合。
+
+### 模板 2：解释动态多态
+
+> C++ 动态多态依赖继承、虚函数、基类指针或引用。基类函数声明为 virtual 后，通过基类指针调用时，运行期会根据对象真实类型找到对应的重写函数。底层通常通过对象里的 vptr 指向类的 vtable，再从虚表中取出函数地址完成间接调用。
+
+### 模板 3：解释多继承底层
+
+> 多继承下派生类对象内部会包含多个基类子对象，每个基类子对象在对象中的偏移可能不同。因此派生类指针转换成不同基类指针时，地址可能需要调整。如果多个基类都有虚函数，主流编译器通常会在不同基类子对象中放不同的 vptr，从不同基类视角走不同虚表。调用被重写的虚函数时，编译器还可能通过 thunk 修正 this 指针。
+
+### 模板 4：解释菱形继承和虚继承
+
+> 菱形继承会让最终派生类中出现多份公共基类子对象，导致数据重复和访问二义性。虚继承可以让公共基类在最终派生类中只保留一份，由最派生类负责构造。代价是对象布局更复杂，通常需要额外的虚基类偏移信息，访问虚基类成员可能有额外开销。
+
+### 模板 5：解释为什么基类析构要 virtual
+
+> 如果一个类作为多态基类使用，就应该把析构函数声明为 virtual。否则通过基类指针 delete 派生类对象时，只会静态绑定到基类析构函数，派生类析构可能不执行，结果是资源泄漏或未定义行为。
+
+---
+
+## 第九部分：快速对比表
+
+| 概念 | 核心含义 | 面试重点 |
+|---|---|---|
+| 继承 | 子类复用并扩展父类 | is-a，访问控制，构造析构顺序 |
+| 组合 | 一个类持有另一个类 | has-a，优先组合 |
+| 静态多态 | 编译期确定调用 | 重载、模板 |
+| 动态多态 | 运行期确定调用 | 虚函数、vptr、vtable |
+| 重载 | 同作用域同名不同参 | 编译期决议 |
+| 重写 | 子类覆盖父类虚函数 | `override` |
+| 隐藏 | 子类同名函数隐藏父类函数 | 不是重载也不一定是重写 |
+| 多继承 | 一个类继承多个基类 | 对象布局、指针调整、多个 vptr |
+| 菱形继承 | 多路径继承同一基类 | 二义性、重复基类 |
+| 虚继承 | 共享一份虚基类 | vbptr / 偏移、最派生类构造 |
+
+---
+
+## 第十部分：最后背诵版
+
+1. **继承**表达 is-a 关系，子类对象中包含基类子对象；最常用的是 `public` 继承。
+2. **多态**分静态多态和动态多态；面试重点是动态多态，也就是继承 + 虚函数 + 基类指针/引用。
+3. **虚函数底层**通常是 `vptr + vtable`：对象通过 `vptr` 找虚表，再从虚表中找到真实函数地址。
+4. **多态基类析构必须 virtual**，否则通过基类指针删除子类对象会产生未定义行为。
+5. **构造函数不能 virtual**，构造/析构函数中调用虚函数也不会表现出派生类多态。
+6. **多继承下对象包含多个基类子对象**，不同基类指针可能指向对象内部不同偏移位置，所以需要指针调整。
+7. **多个有虚函数的基类**通常意味着派生类对象里可能有多个 `vptr`，从不同基类视角走不同虚表。
+8. **菱形继承**会产生公共基类重复和访问二义性；虚继承可以共享一份公共基类，但代价是对象模型更复杂。
+9. **工程上优先组合，谨慎继承**；多继承适合组合多个纯接口，不适合随意继承多个带状态的实现类。
+10. **写虚函数重写一定加 `override`**，可以让编译器帮你发现签名写错导致的隐藏问题。

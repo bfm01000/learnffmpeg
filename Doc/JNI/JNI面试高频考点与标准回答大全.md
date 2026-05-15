@@ -25,11 +25,51 @@ JVM 的垃圾回收器（GC）需要知道 C++ 层是否在使用某个 Java 对
 *   **GlobalRef（全局引用）**：强引用，强行阻断 GC 回收对象，直到手动调用 `DeleteGlobalRef`。
 *   **WeakGlobalRef（弱全局引用）**：弱引用，不阻断 GC 回收对象，但用完也需要手动调用 `DeleteWeakGlobalRef` 释放凭证内存。
 
+**结合代码理解：**
+```cpp
+class JniWeakObserver {
+public:
+    JniWeakObserver(JNIEnv* env, jobject listener) {
+        // listener 是 LocalRef，只在当前 JNI 调用期间有效，不能直接保存到成员变量
+        weakListener_ = env->NewWeakGlobalRef(listener);
+    }
+
+    ~JniWeakObserver() {
+        JNIEnv* env = getJniEnv();
+        if (weakListener_) {
+            // 释放的是 JNI 弱全局引用“凭证”，不是强行释放 Java 对象
+            env->DeleteWeakGlobalRef(weakListener_);
+        }
+    }
+
+    void notifyError(JNIEnv* env, int code) {
+        // 使用前先把 WeakGlobalRef 临时提升成 LocalRef
+        // 如果 Java 对象已经被 GC，NewLocalRef 会返回 nullptr
+        jobject localListener = env->NewLocalRef(weakListener_);
+        if (!localListener) {
+            return;
+        }
+
+        env->CallVoidMethod(localListener, onErrorMethodId_, code);
+        env->DeleteLocalRef(localListener);
+    }
+
+private:
+    jweak weakListener_ = nullptr;
+    jmethodID onErrorMethodId_ = nullptr;
+};
+```
+
+这里要抓住三点：
+*   `listener` 参数本身是 **LocalRef**，不能跨 JNI 调用长期保存。
+*   `NewWeakGlobalRef(listener)` 创建的是一个 **弱全局引用凭证**，不会阻止 Java 对象被 GC，但这个凭证本身要手动 `DeleteWeakGlobalRef`。
+*   真正回调前用 `NewLocalRef(weakListener_)` 临时提升一下，确保本次 `CallVoidMethod` 期间对象不会被 GC。
+
 **🗣️ 面试标准回答：**
 > “JNI 里有三种引用类型：局部引用、全局引用和弱全局引用。
 > **局部引用**是函数一返回就自动失效的。如果我们想在 C++ 层面长久保存一个 Java 对象（比如保存一个 Listener 以后回调），绝对不能直接存局部引用，否则函数一结束它就成野指针了。
 > 必须使用 **全局引用 (`NewGlobalRef`)**，它相当于给 Java 对象加了强锁，GC 就不会回收它了。不过用全局引用一定要当心内存泄漏，不用的时候必须手动调用 `DeleteGlobalRef` 去释放。
-> 第三种是**弱全局引用**，它不影响 GC 回收，通常用于做兜底防泄漏的缓存，使用前需要用 `IsSameObject` 判断一下对象是不是已经被 GC 杀掉了。”
+> 第三种是**弱全局引用**，它不影响 GC 回收，很适合保存 Activity / Listener 这类生命周期不归 Native 控制的对象。使用前我通常会用 `NewLocalRef(weakRef)` 临时提升一下；如果返回 `nullptr`，说明对象已经被 GC，就不再回调。最后还要记得 `DeleteWeakGlobalRef`，释放的是 JNI 引用凭证，不是 Java 对象本身。”
 
 ---
 
