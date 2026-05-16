@@ -58,6 +58,28 @@ struct objc_class {
 3. **元类（Meta Class）**：它是类对象的“类”。它专门用来存储**类方法**。当你调用类方法时，Runtime 会顺着类对象的 `isa` 找到元类，在元类的方法列表里查找。
 4. **根元类（Root Meta Class）**：所有元类的基类（通常是 NSObject 的元类）。为了让所有的 `isa` 指针最终有个归宿形成闭环，根元类的 `isa` 指针指向它自己。
 
+**💻 代码实战：如何获取与区分这四种对象？**
+
+```objc
+// 1. 实例对象：通过 alloc 创建，每次地址都不同
+Person *p = [[Person alloc] init];
+
+// 2. 类对象：通过 class 方法获取，全局单例
+Class personClass = [Person class]; 
+// 注意：[p class] 和 [Person class] 拿到的地址完全一样，都是那个唯一的类对象
+
+// 3. 元类：必须通过 Runtime 的 object_getClass() 获取其 isa 指向
+Class personMetaClass = object_getClass(personClass);
+// ⚠️ 极其容易丢分的坑点：[personClass class] 返回的依然是 personClass 自己！不会返回元类！
+
+// 4. 根元类：继续获取元类的 isa 指向
+Class rootMetaClass = object_getClass(personMetaClass);
+
+// 验证闭环：对根元类再调一次，发现返回的指针地址还是它自己
+Class rootRoot = object_getClass(rootMetaClass);
+// 此时 rootMetaClass == rootRoot
+```
+
 **经典 isa 与 superclass 走向图（必须刻在脑子里）：**
 
 ```text

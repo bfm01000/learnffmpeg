@@ -181,8 +181,48 @@ for (int i = 0; i < 100000; i++) {
 > 1. **哪些不需要加 Pool？（`alloc/new/copy/mutableCopy` 开头的方法）**
 >    如果你在循环里是用 `[[NSString alloc] initWithFormat:]` 生成的对象，底层是直接 +1 返回。ARC 在局部变量离开作用域 `}` 处插入 release 后，对象引用计数直接减到 0 当场销毁。这种情况下，即使不加 `@autoreleasepool` 内存也不会爆。
 > 
+>    **代码示例：**
+---
+```objc
+for (int i = 0; i < 100000; i++) {
+    // alloc 创建，初始引用计数为 1
+    NSString *str = [[NSString alloc] initWithFormat:@"Hello %d", i]; 
+    // do something with str
+    
+    // 循环结束 \} 前，ARC 自动插入 [str release]
+    // 此时引用计数 1 - 1 = 0，str 被立即释放销毁，内存不会堆积！
+}
+```
+---
+> 
 > 2. **哪些必须加 Pool？（非 alloc 开头的类工厂方法）**
 >    但是像 `stringWithFormat:` 这类**类工厂方法**，其底层为了保证对象在返回给调用者时不被立刻销毁，会主动对这个新对象调用一次 `autorelease`。
+> 
+**代码示例：**
+```objc
+for (int i = 0; i < 100000; i++) {
+    // 类工厂方法创建，内部相当于：
+    // NSString *str = [[[NSString alloc] initWithFormat:@"..."] autorelease];
+    NSString *str = [NSString stringWithFormat:@"Hello %d", i];
+    // do something with str
+    
+    // 循环结束 } 前，ARC 同样自动插入 [str release]
+    // 虽然抵消了局部变量的强引用，但对象身上还有一层 autorelease "锁"
+    // 由于当前循环没有手写 @autoreleasepool，对象被挂载到了距离当前最近的 Pool 中
+    // 
+    // 【池子到底是谁的？什么时候销毁？】
+    // 场景 A（最常见：主线程有 UI 交互 / 定时器 / 网络回调触发）：
+    // 系统会在整个事件（比如整个 buttonClicked 方法，包括它调用的所有子方法）开始前 Push 一个 Pool，
+    // 并在整个事件彻底处理完、RunLoop 准备休眠时才 Pop 销毁。
+    // 在事件完全跑完之前，即使你把这 10 万次循环封装进了 10 层深的方法里，返回时池子也依然没销毁，内存照样暴涨！
+    //
+    // 场景 B（子线程没有开启 RunLoop）：
+    // 如果是你自己创建的子线程（比如 pthread 或者直接 [NSThread detach]），且没有主动跑 RunLoop。
+    // 这种情况下，根本没有系统帮你创建最外层的 Pool！
+    // 这些 autorelease 对象会因为找不到池子而发生内存泄漏，控制台还会打印 "just leaking" 警告。
+    // 因此在这种子线程里，你必须自己在最外层（或者循环里）手写 @autoreleasepool。
+}
+```
 > 
 > `[obj autorelease]` 的本质是：**它并没有释放对象，而是把该对象挂载（注册）到了距离当前代码最近的一个 AutoreleasePool 中。** 这就相当于给这个对象上了一个『延迟执行的 release 锁』。
 > 
@@ -191,6 +231,66 @@ for (int i = 0; i < 100000; i++) {
 ---
 
 ## 考点 6：循环引用（Retain Cycle）怎么解决？`__weak` 是如何置空的？
+
+**底层原理：**
+当两个对象相互强引用（比如 Block 强持有 self，self 又强持有 Block）时，引用计数永远降不到 0，导致内存泄漏。
+打断循环引用常用 `__weak`。`__weak` 修饰的指针底层是被 Runtime 的一个全局 `weak_table`（弱引用表，一个 Hash 表）管理的。Key 是对象的内存地址，Value 是所有指向它的弱引用指针数组。当对象被释放（`dealloc`）时，Runtime 会去这张表里查找到所有的弱引用指针，并将它们全部置为 `nil`，从而避免野指针。
+
+**🗣️ 面试标准回答：**
+> “循环引用最常见的场景就是 Block 或者 Delegate 互相持有着不放手，导致两边谁也死不掉。我们的标准解法是用 `__weak` 打破这个闭环，比如常用的 `__weak typeof(self) weakSelf = self`。
+> **至于 `__weak` 为什么在对象死后能自动变成 `nil`**，这是因为 Runtime 在底层维护了一张全局的**弱引用 Hash 表（weak_table）**。
+> 对象的内存地址是 Key，我们的 weak 指针地址是 Value。当这个对象走到生命的尽头、调用 `dealloc` 的时候，Runtime 就会拿着对象的地址去这个 Hash 表里查，把所有指向它的 weak 指针统统清空设为 `nil`，这套机制极其优雅地防止了野指针 Crash 问题的发生。”
+
+**🔥 极限深挖拷问：`__weak` 置空的过程有多线程安全问题吗？如果在异步 Block 里连续使用 `weakSelf` 会有什么隐患？**
+
+> 面试绝杀回答：“这个问题要分**底层 Runtime** 和**业务代码**两个层面来看。
+> 
+> 1. **底层 Runtime 层面没有多线程安全问题（分离锁机制）。**
+>    很多人以为操作全局 `weak_table` 会引发多线程数据竞争，或者为了安全必须加一把全局大锁导致性能极差。其实苹果在底层并没有用全局大锁，而是采用了**分离锁（Striped Locks）**机制。底层的弱引用表实际上是由 64 个 `SideTable` 组成的一个数组，每个 `SideTable` 内部都有一把独立的自旋锁（现为 `os_unfair_lock`）。
+>    当多线程同时对不同的对象清空 weak 指针时，Runtime 会通过对象地址 Hash 取模，找到它专属的那一个 `SideTable` 并加锁。这种设计既保证了多线程下置空 `nil` 的绝对安全，又完美避免了全局锁造成的性能阻塞。
+> 
+> 2. **业务代码层面：存在严重的“时序”多线程隐患（必须用强弱共舞解决）。**
+>    虽然底层安全，但在我们的业务 Block 中直接使用 `weakSelf` 会有经典的多线程问题。假设我们在异步网络回调里写了 `[weakSelf doStepOne];` 和 `[weakSelf doStepTwo];`。因为是异步，可能在两句代码执行的间隙，主线程触发了页面退出，把对象给 `dealloc` 了。底层的安全机制会瞬间把 `weakSelf` 置为 `nil`，导致 `doStepTwo` 直接失效不执行（向 nil 发消息无效）。这会让你的业务逻辑被硬生生从中间截断，产生极其诡异的 Bug。
+>
+>    **危险的时序 Bug 代码示例：**
+```objc
+__weak typeof(self) weakSelf = self;
+[Network requestData:^{
+    // 假设当前在子线程回调，此时 weakSelf 存活
+    [weakSelf doStepOne];  // 执行成功
+    
+    // 🔴 极度危险的时刻！
+    // 就在这一毫秒，用户退出了当前页面，主线程立刻把 self 释放了！
+    // 底层 weak_table 瞬间把 weakSelf 变成了 nil
+    
+    [weakSelf doStepTwo];  // 此时 weakSelf 变成了 nil，这行代码无效
+    weakSelf.data = data;  // 数据赋值失败，业务逻辑断裂！
+}];
+```
+> 
+>    **标准解法就是 Weak-Strong Dance（强弱共舞）：**在 Block 内部的第一行，立刻加上 `__strong typeof(weakSelf) strongSelf = weakSelf;`。这会在局部给对象 `+1` 引用计数，哪怕此时外部页面退出，子线程的 `strongSelf` 强指针也能临时把对象“拉住”，直到当前 Block 的业务代码全部安全执行完毕，才随着局部变量出作用域而彻底释放。”
+>
+>    **强弱共舞（安全代码）示例：**
+>    ```objc
+>    __weak typeof(self) weakSelf = self;
+>    [Network requestData:^{
+>        // 进来第一件事，用局部的强指针【临时保住】它的命
+>        __strong typeof(weakSelf) strongSelf = weakSelf; 
+>        
+>        if (strongSelf) { // 判空，确保刚进 Block 时对象还没死
+>            [strongSelf doStepOne];
+>            // 就算此时外部主线程退出了页面，由于 strongSelf 强引用着它（引用计数>0）
+>            // 对象绝对死不掉，保证了业务逻辑的完整性
+>            [strongSelf doStepTwo]; 
+>            strongSelf.data = data;
+>        }
+>        // Block 彻底执行完出 `}` 作用域，局部变量 strongSelf 释放，对象安详离世。
+>    }];
+>    ```
+
+---
+
+## 考点 7：`alloc`, `retain`, `release` 的底层含义与运作机制
 
 在 Objective-C 中，内存管理的核心围绕着“引用计数（Reference Counting）”展开。这三个方法是操控对象生死的最基础操作。
 
@@ -216,12 +316,3 @@ for (int i = 0; i < 100000; i++) {
 > `alloc` 负责在堆上分配清零的内存，诞生新对象，并把引用计数设为 1。
 > `retain` 表示接手所有权，会让引用计数 +1，确保对象不死。
 > `release` 表示放弃所有权，会让引用计数 -1。如果系统发现某次 release 后对象的计数清零了，就会立刻触发 dealloc 彻底销毁它。在现在的 ARC 时代，这三个方法的调用已经完全被编译器接管，严禁我们手动调用了。”
-
-**底层原理：**
-当两个对象相互强引用（比如 Block 强持有 self，self 又强持有 Block）时，引用计数永远降不到 0，导致内存泄漏。
-打断循环引用常用 `__weak`。`__weak` 修饰的指针底层是被 Runtime 的一个全局 `weak_table`（弱引用表，一个 Hash 表）管理的。Key 是对象的内存地址，Value 是所有指向它的弱引用指针数组。当对象被释放（`dealloc`）时，Runtime 会去这张表里查找到所有的弱引用指针，并将它们全部置为 `nil`，从而避免野指针。
-
-**🗣️ 面试标准回答：**
-> “循环引用最常见的场景就是 Block 或者 Delegate 互相持有着不放手，导致两边谁也死不掉。我们的标准解法是用 `__weak` 打破这个闭环，比如常用的 `__weak typeof(self) weakSelf = self`。
-> **至于 `__weak` 为什么在对象死后能自动变成 `nil`**，这是因为 Runtime 在底层维护了一张全局的**弱引用 Hash 表（weak_table）**。
-> 对象的内存地址是 Key，我们的 weak 指针地址是 Value。当这个对象走到生命的尽头、调用 `dealloc` 的时候，Runtime 就会拿着对象的地址去这个 Hash 表里查，把所有指向它的 weak 指针统统清空设为 `nil`，这套机制极其优雅地防止了野指针 Crash 问题的发生。”
