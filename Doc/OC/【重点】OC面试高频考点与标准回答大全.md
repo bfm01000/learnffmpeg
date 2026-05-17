@@ -130,6 +130,33 @@ ARC（自动引用计数）是 LLVM 编译器的一个特性，编译时在合�
 > 关于 **AutoreleasePool**，它的底层其实是一个用双向链表拼起来的栈结构，叫做 `AutoreleasePoolPage`。
 > 当我们把一个对象标记为 `autorelease` 时，它就会被压入这个栈里。当当前的 RunLoop 循环结束，或者代码走出了 `@autoreleasepool {}` 大括号时，这个池子就会被清空，同时会对里面装的所有对象统一发送一次 `release` 消息。”
 
+**🔥 极限深挖拷问：RunLoop 和 AutoreleasePool 有什么联系和区别？**
+
+> 面试绝杀回答：“`RunLoop` 和 `AutoreleasePool` 不是同一个东西，但在主线程上它们经常一起出现。
+>
+> `RunLoop` 负责线程的事件循环，解决的是**线程如何保持活着并处理事件**的问题；`AutoreleasePool` 负责延迟释放对象，解决的是 **autorelease 对象什么时候 release** 的问题。
+>
+> 在 iOS 主线程中，系统会给 `RunLoop` 注册 Observer，用来自动管理释放池。一次 RunLoop 循环大致可以理解为：
+>
+> ```objc
+> // 伪代码理解
+> RunLoop 即将进入一次循环:
+>     push AutoreleasePool
+>
+> RunLoop 开始处理事件:
+>     // 点击事件、Timer、Source、网络回调、布局刷新等
+>     // 期间产生的 autorelease 对象进入当前 Pool
+>
+> RunLoop 即将休眠 / 本轮循环结束:
+>     pop AutoreleasePool
+>     // Pool 里的对象统一收到 release
+>     push 一个新的 AutoreleasePool
+> ```
+>
+> 所以主线程上的很多 `autorelease` 对象，并不是在当前方法结束或 `for` 循环结束时马上释放，而是等当前这轮 RunLoop 处理完事件、准备休眠时才统一释放。
+>
+> 一句话总结：**RunLoop 管线程调度和事件循环，AutoreleasePool 管对象延迟释放；主线程 RunLoop 每一轮循环都会自动帮我们维护一层 AutoreleasePool。**”
+
 **⚠️ 面试必考实战：为什么在大的 for 循环里必须手动加 `@autoreleasepool`？**
 
 如果我们在一个大的 `for` 循环里创建了大量的临时对象（比如读取、处理上万张图片），在默认情况下，这些临时对象都会被挂在主线程最外层的 AutoreleasePool 中。而主线程的 Pool 要等到**这一次 RunLoop 循环完全结束（也就是当前线程闲下来）**时才会统一清空。
