@@ -50,6 +50,48 @@ Category 在底层是一个叫 `category_t` 的结构体。在程序运行时（
 > **至于为什么不能直接添加成员变量**，是因为一个类的内存布局在编译期就已经死死定好了。对象的实例变量在底层其实就是一段连续的内存偏移量。运行的时候，这块内存早就分配完了，你不可能再硬生生地改变它的大小。
 > 如果非要在分类里加变量，我们通常的绕过方案是利用 Runtime 的 **关联对象（Associated Object）** 技术，本质上是系统在底层维护了一个全局的 Hash 表来存这些额外的数据。”
 
+**💻 代码实战：如何利用关联对象（Associated Object）在分类中添加属性？**
+
+在实际开发中，我们经常需要在分类中添加属性（例如给 `UIView` 加一个 `clickBlock`）。虽然不能添加成员变量（`_ivar`），但我们可以通过 `@property` 配合 Runtime 的关联对象来实现。
+
+```objc
+#import <objc/runtime.h>
+
+@interface UIView (ClickBlock)
+// 声明属性，但分类不会自动生成 _clickBlock 成员变量和 setter/getter
+@property (nonatomic, copy) void(^clickBlock)(void);
+@end
+
+@implementation UIView (ClickBlock)
+
+// 1. 定义一个唯一的静态变量地址作为 Key
+static const void *kClickBlockKey = &kClickBlockKey;
+
+// 2. 手动实现 setter 方法
+- (void)setClickBlock:(void (^)(void))clickBlock {
+    // 参数说明：
+    // object: 关联的宿主对象 (self)
+    // key: 唯一的 Key
+    // value: 要关联的值 (clickBlock)
+    // policy: 内存管理策略 (OBJC_ASSOCIATION_COPY_NONATOMIC 对应 @property 的 copy, nonatomic)
+    objc_setAssociatedObject(self, kClickBlockKey, clickBlock, OBJC_ASSOCIATION_COPY_NONATOMIC);
+}
+
+// 3. 手动实现 getter 方法
+- (void (^)(void))clickBlock {
+    // 通过宿主对象和 Key，去全局 Hash 表中取出对应的值
+    return objc_getAssociatedObject(self, kClickBlockKey);
+}
+
+@end
+```
+
+**🔥 极限深挖拷问：关联对象存在哪里？对象销毁时，关联对象会泄漏吗？**
+
+> 面试绝杀回答：“关联对象**并没有存在宿主对象本身的内存里**。系统在底层维护了一个全局的 `AssociationsManager`，里面有一个 `AssociationsHashMap`（哈希表）。这个哈希表的 Key 是宿主对象的内存地址，Value 是另一个哈希表（存着这个对象所有的关联数据）。
+> 
+> **至于内存泄漏问题，完全不用担心。** 当宿主对象调用 `dealloc` 准备销毁时，Runtime 的底层源码在 `dealloc` 的流程中，会调用一个 `_object_remove_assocations()` 函数。这个函数会拿着当前对象的地址去全局哈希表里查，如果发现有挂载的关联对象，就会自动把它们全部清理掉。所以只要你的内存管理策略（Policy）写对了，关联对象是绝对安全的。”
+
 ---
 
 ## 考点 4：Block 的底层是什么？`__block` 解决了什么问题？
