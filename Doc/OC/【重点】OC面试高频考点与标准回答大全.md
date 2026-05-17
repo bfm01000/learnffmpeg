@@ -102,6 +102,15 @@ static const void *kClickBlockKey = &kClickBlockKey;
 >
 > **至于内存泄漏问题，完全不用担心。** 当宿主对象调用 `dealloc` 准备销毁时，Runtime 的底层源码在 `dealloc` 的流程中，会调用一个 `_object_remove_assocations()` 函数。这个函数会拿着当前对象的地址去全局哈希表里查，如果发现有挂载的关联对象，就会自动把它们全部清理掉。所以只要你的内存管理策略（Policy）写对了，关联对象是绝对安全的。”
 
+**🔥 极限深挖拷问：多个不同的对象（比如 viewA 和 viewB）都用同一个静态变量 `kClickBlockKey` 作为 Key，会互相覆盖冲突吗？**
+
+> 面试绝杀回答：“绝对不会！这是一个非常经典的底层数据结构问题。
+> 很多人担心 `static` 变量全局只有一份地址，会导致 viewA 的 block 覆盖掉 viewB 的 block。但实际上，Runtime 底层存储关联对象使用的是一个**双层哈希表（两级 Hash Map）**：
+> - **第一层 Hash 表的 Key 是【宿主对象的内存地址】（即 `self`）**。这意味着 viewA 和 viewB 在第一层就被完全隔离开了，它们各自拥有一个独立的第二层 Hash 表。
+> - **第二层 Hash 表的 Key 才是我们传进去的【静态变量地址】（即 `kClickBlockKey`）**。
+> 
+> 所以，`kClickBlockKey` 的作用仅仅是为了区分**同一个对象身上的不同属性**（比如区分 `clickBlock` 和 `longPressBlock`）。不同对象之间因为第一层 Key（`self`）不同，哪怕用同一个静态变量做第二层 Key，也绝对不可能发生冲突。”
+
 ---
 
 ## 考点 4：Block 的底层是什么？`__block` 解决了什么问题？
