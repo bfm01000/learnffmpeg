@@ -79,17 +79,17 @@ static const void *kClickBlockKey = &kClickBlockKey;
 
 // 2. 手动实现 setter 方法
 - (void)setClickBlock:(void (^)(void))clickBlock {
-    // 参数说明：
-    // object: 关联的宿主对象 (self)
-    // key: 唯一的 Key
-    // value: 要关联的值 (clickBlock)
-    // policy: 内存管理策略 (OBJC_ASSOCIATION_COPY_NONATOMIC 对应 @property 的 copy, nonatomic)
+    // objc_setAssociatedObject 的作用：把一个值，通过一个唯一的 Key，挂载到一个宿主对象身上。
+    // 参数 1 (object): 宿主对象，这里就是 self (当前的 UIView)
+    // 参数 2 (key): 唯一的 Key，用来在 Hash 表中定位这个值
+    // 参数 3 (value): 你要存进去的具体数据，这里就是传进来的 clickBlock
+    // 参数 4 (policy): 内存管理策略。OBJC_ASSOCIATION_COPY_NONATOMIC 完美对应了我们在 @property 里写的 (nonatomic, copy)
     objc_setAssociatedObject(self, kClickBlockKey, clickBlock, OBJC_ASSOCIATION_COPY_NONATOMIC);
 }
 
 // 3. 手动实现 getter 方法
 - (void (^)(void))clickBlock {
-    // 通过宿主对象和 Key，去全局 Hash 表中取出对应的值
+    // objc_getAssociatedObject 的作用：拿着宿主对象和唯一的 Key，去系统的全局 Hash 表里把之前存的值取出来。
     return objc_getAssociatedObject(self, kClickBlockKey);
 }
 
