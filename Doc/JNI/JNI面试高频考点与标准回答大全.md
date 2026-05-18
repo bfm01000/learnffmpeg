@@ -2,7 +2,115 @@
 
 在音视频开发或底层 SDK 开发的面试中，JNI（Java Native Interface）是绕不开的重头戏。面试官考察 JNI，主要看你是否踩过坑、懂不懂底层内存管理和性能优化。
 
-以下是面试中最常问的 6 个 JNI 考点，附带底层原理和可以直接在面试中“背诵”的口语化标准回答。
+以下是面试中最常问的 JNI 考点，附带底层原理和可以直接在面试中“背诵”的口语化标准回答。
+
+---
+
+## 项目追问：你们 SDK 是怎么处理 C++ 层线程回调 Java 的？（结合 TLS）
+优化
+这块的核心问题是：我们的回调通常是在cpp自线程中，这个子线程不是java创建，因此不能直接通过直接调用住线程JNIEnv调用java代码，否则会crash
+* 因此我们需要手动去通过AttachCurrentThread，去获取当前线程的JNIEnv，当结束调用之后，必须通过DetachCurrentThread去释放资源，否则会造成内存泄漏
+* 但是频繁申请和释放又会导致额外的开销，因此需要
+
+**🗣️ 面试标准回答：**
+
+> “我们 SDK 里 C++层会有很多内部线程，比如解码线程、渲染线程、网络线程，这些线程不是 Java 创建的，所以不能直接拿主线程的 `JNIEnv` 去回调 Java。我们的做法是：全局只保存 `JavaVM`*，每个 C++ 线程真正要回调 Java 时，再通过 `JavaVM->AttachCurrentThread` 获取当前线程自己的 `JNIEnv*`。
+>
+> 这里有两个关键点。第一，Java 回调对象不能直接保存局部引用，我们会在初始化时把 listener 或 callback 转成 `GlobalRef`，保证跨线程回调时对象不会被 GC 回收；不用时再 `DeleteGlobalRef`。
+>
+> 第二，为了避免每次回调都 Attach/Detach，我们结合 TLS，也就是线程局部存储来做缓存。线程第一次回调时，如果 TLS 里没有 `JNIEnv`，就 Attach 当前线程，并把拿到的 `JNIEnv*` 存到 TLS；后续同一线程再次回调，就直接从 TLS 取，避免重复 Attach。
+>
+> 最后，TLS 创建 key 的时候会注册一个析构函数。等这个 C++ 线程退出时，系统会自动触发 TLS destructor，我们在里面调用 `JavaVM->DetachCurrentThread`，确保线程解绑 JVM。这样既避免了 `JNIEnv` 跨线程使用导致的崩溃，也避免了忘记 Detach 导致的 JVM 线程资源泄漏。”
+
+**核心流程：**
+
+```text
+C++ 线程触发回调
+    ↓
+从 TLS 查询当前线程是否已有 JNIEnv
+    ↓
+没有：JavaVM->AttachCurrentThread 获取 JNIEnv，并写入 TLS
+    ↓
+有：直接复用当前线程的 JNIEnv
+    ↓
+通过 GlobalRef 调用 Java listener/callback
+    ↓
+线程退出时，TLS destructor 自动 DetachCurrentThread
+```
+
+**极简代码示例：**
+
+```cpp
+// 全局保存 JVM。JavaVM 可以跨线程保存，JNIEnv 不可以跨线程保存。
+static JavaVM* g_vm = nullptr;
+
+// TLS key：每个线程通过同一个 key，取到的都是自己线程私有的 JNIEnv。
+static pthread_key_t g_env_key;
+
+// Java callback 的全局引用，避免 Java 对象在 C++ 异步回调期间被 GC 回收。
+static jobject g_callback = nullptr;
+
+void detachThread(void*) {
+    if (g_vm) {
+        // 当前 C++ 线程退出时，由 TLS 析构函数自动触发解绑。
+        g_vm->DetachCurrentThread();
+    }
+}
+
+JNIEnv* getEnv() {
+    // 先从 TLS 中取当前线程已经缓存过的 JNIEnv。
+    JNIEnv* env = static_cast<JNIEnv*>(pthread_getspecific(g_env_key));
+    if (env) {
+        return env;
+    }
+
+    // 第一次进入 Java 回调的 C++ 线程，需要先 Attach 到 JVM。
+    g_vm->AttachCurrentThread(&env, nullptr);
+
+    // Attach 成功后把 JNIEnv 放入 TLS，后续同一线程直接复用。
+    pthread_setspecific(g_env_key, env);
+    return env;
+}
+
+jint JNI_OnLoad(JavaVM* vm, void*) {
+    // so 加载时保存全局 JavaVM。
+    g_vm = vm;
+
+    // 创建 TLS key，并注册线程退出时的清理函数。
+    pthread_key_create(&g_env_key, detachThread);
+    return JNI_VERSION_1_6;
+}
+
+void initCallback(JNIEnv* env, jobject callback) {
+    // callback 是局部引用，函数返回后会失效，所以必须转成 GlobalRef。
+    g_callback = env->NewGlobalRef(callback);
+}
+
+void notifyFromCppThread() {
+    // 不管当前是哪个 C++ 线程，都通过 getEnv 获取本线程自己的 JNIEnv。
+    JNIEnv* env = getEnv();
+
+    // 通过保存的 GlobalRef 找到 Java 回调方法并调用。
+    jclass cls = env->GetObjectClass(g_callback);
+    jmethodID mid = env->GetMethodID(cls, "onEvent", "()V");
+    env->CallVoidMethod(g_callback, mid);
+
+    // cls 是局部引用，用完及时释放，避免局部引用表溢出。
+    env->DeleteLocalRef(cls);
+}
+
+void releaseCallback(JNIEnv* env) {
+    // SDK 销毁时释放全局引用，否则会导致 Java 对象无法被 GC。
+    env->DeleteGlobalRef(g_callback);
+    g_callback = nullptr;
+}
+```
+
+这段代码只表达核心思想：`JavaVM` 全局保存，`JNIEnv` 按线程获取并放进 TLS，Java 回调对象用 `GlobalRef` 保存，线程退出时由 TLS 析构函数自动 `DetachCurrentThread`。
+
+**一句话总结：**
+
+> “`JavaVM` 是全局入口，`JNIEnv` 是线程私有上下文，`GlobalRef` 负责保证 Java 回调对象生命周期，TLS 负责缓存每个线程的 `JNIEnv` 并在线程销毁时自动 Detach。”
 
 ---
 
@@ -12,6 +120,7 @@
 `JNIEnv`（JNI Environment）是一个指向 JNI 函数表指针的指针。它是**线程私有**的上下文环境。JVM 内部在管理线程时，依赖 `JNIEnv` 里面的环境状态变量，如果把 A 线程的 `JNIEnv` 交给 B 线程用，会导致 JVM 的内部状态彻底错乱，直接引发 Segmentation Fault（崩溃）。与之相对，`JavaVM` 是进程全局唯一的，所有线程共享。
 
 **🗣️ 面试标准回答：**
+
 > “`JNIEnv` 代表了 JNI 的上下文环境，它里面包含了所有调 Java 方法的 API。**它是绝对不能跨线程传递的**，因为它和当前线程是强绑定的。
 > 如果我们在 C++ 的子线程想要回调 Java，我们不能直接拿主线程传过来的 `JNIEnv` 去用，而是必须拿着全局保存的 `JavaVM` 指针，调用 `AttachCurrentThread` 让 JVM 为当前的子线程分配一个新的 `JNIEnv`。用完之后，还要记得调用 `DetachCurrentThread` 进行解绑。”
 
@@ -21,55 +130,17 @@
 
 **底层原理：**
 JVM 的垃圾回收器（GC）需要知道 C++ 层是否在使用某个 Java 对象，这就需要引入“引用凭证”机制。
-*   **LocalRef（局部引用）**：默认传过来的都是这个。作用域仅限当前 JNI 函数，函数 `return` 后 JVM 自动回收凭证。
-*   **GlobalRef（全局引用）**：强引用，强行阻断 GC 回收对象，直到手动调用 `DeleteGlobalRef`。
-*   **WeakGlobalRef（弱全局引用）**：弱引用，不阻断 GC 回收对象，但用完也需要手动调用 `DeleteWeakGlobalRef` 释放凭证内存。
 
-**结合代码理解：**
-```cpp
-class JniWeakObserver {
-public:
-    JniWeakObserver(JNIEnv* env, jobject listener) {
-        // listener 是 LocalRef，只在当前 JNI 调用期间有效，不能直接保存到成员变量
-        weakListener_ = env->NewWeakGlobalRef(listener);
-    }
-
-    ~JniWeakObserver() {
-        JNIEnv* env = getJniEnv();
-        if (weakListener_) {
-            // 释放的是 JNI 弱全局引用“凭证”，不是强行释放 Java 对象
-            env->DeleteWeakGlobalRef(weakListener_);
-        }
-    }
-
-    void notifyError(JNIEnv* env, int code) {
-        // 使用前先把 WeakGlobalRef 临时提升成 LocalRef
-        // 如果 Java 对象已经被 GC，NewLocalRef 会返回 nullptr
-        jobject localListener = env->NewLocalRef(weakListener_);
-        if (!localListener) {
-            return;
-        }
-
-        env->CallVoidMethod(localListener, onErrorMethodId_, code);
-        env->DeleteLocalRef(localListener);
-    }
-
-private:
-    jweak weakListener_ = nullptr;
-    jmethodID onErrorMethodId_ = nullptr;
-};
-```
-
-这里要抓住三点：
-*   `listener` 参数本身是 **LocalRef**，不能跨 JNI 调用长期保存。
-*   `NewWeakGlobalRef(listener)` 创建的是一个 **弱全局引用凭证**，不会阻止 Java 对象被 GC，但这个凭证本身要手动 `DeleteWeakGlobalRef`。
-*   真正回调前用 `NewLocalRef(weakListener_)` 临时提升一下，确保本次 `CallVoidMethod` 期间对象不会被 GC。
+- **LocalRef（局部引用）**：默认传过来的都是这个。作用域仅限当前 JNI 函数，函数 `return` 后 JVM 自动回收凭证。
+- **GlobalRef（全局引用）**：强引用，强行阻断 GC 回收对象，直到手动调用 `DeleteGlobalRef`。
+- **WeakGlobalRef（弱全局引用）**：弱引用，不阻断 GC 回收对象，但用完也需要手动调用 `DeleteWeakGlobalRef` 释放凭证内存。
 
 **🗣️ 面试标准回答：**
+
 > “JNI 里有三种引用类型：局部引用、全局引用和弱全局引用。
 > **局部引用**是函数一返回就自动失效的。如果我们想在 C++ 层面长久保存一个 Java 对象（比如保存一个 Listener 以后回调），绝对不能直接存局部引用，否则函数一结束它就成野指针了。
 > 必须使用 **全局引用 (`NewGlobalRef`)**，它相当于给 Java 对象加了强锁，GC 就不会回收它了。不过用全局引用一定要当心内存泄漏，不用的时候必须手动调用 `DeleteGlobalRef` 去释放。
-> 第三种是**弱全局引用**，它不影响 GC 回收，很适合保存 Activity / Listener 这类生命周期不归 Native 控制的对象。使用前我通常会用 `NewLocalRef(weakRef)` 临时提升一下；如果返回 `nullptr`，说明对象已经被 GC，就不再回调。最后还要记得 `DeleteWeakGlobalRef`，释放的是 JNI 引用凭证，不是 Java 对象本身。”
+> 第三种是**弱全局引用**，它不影响 GC 回收，通常用于做兜底防泄漏的缓存，使用前需要用 `IsSameObject` 判断一下对象是不是已经被 GC 杀掉了。”
 
 ---
 
@@ -79,6 +150,7 @@ private:
 见文档《SDK回调》与《TLS与JNI线程销毁解析》。考察你是否懂 `AttachCurrentThread` 以及如何优雅地释放。
 
 **🗣️ 面试标准回答：**
+
 > “我们的做法是通过 `JavaVM->AttachCurrentThread` 获取专属的 `JNIEnv` 来进行回调。
 > 但是频繁 Attach 和 Detach 性能很差，并且如果在代码末尾手动 Detach 很容易因为异常或中途 return 导致遗漏。
 > 所以在实际项目中，我们**利用了 POSIX 的 TLS（线程局部存储）机制**进行优化。在 C++ 初始化时，通过 `pthread_key_create` 注册一个包含了 `DetachCurrentThread` 的析构函数。这样子线程在第一次回调时只做一次 Attach，等这根线程死掉的时候，操作系统底层会自动触发这个析构函数去完成 Detach 操作。这样既做到了性能最优，又实现了绝对的解耦和安全。”
@@ -88,22 +160,25 @@ private:
 ## 考点 4：Java 和 C++ 之间传递大块音视频数据，如何避免性能瓶颈？
 
 **底层原理：**
-Java 的 `byte[]` 存放在 JVM 堆内存中，C++ 的 `uint8_t*` 存放在 Native 堆内存中。如果使用常规的 `GetByteArrayRegion` 或者 `SetByteArrayRegion`，本质上是一次彻头彻尾的内存拷贝（Deep Copy）。对于一帧 1080P 的画面来说，一秒拷贝 30 次，CPU 和内存带宽会被大量消耗，同时频繁申请大数组会引发严重的 Java GC 抖动（内存抖动）。
+Java 的 `byte[]` 存放在 JVM 堆内存中，C++ 的 `uint8_t`* 存放在 Native 堆内存中。如果使用常规的 `GetByteArrayRegion` 或者 `SetByteArrayRegion`，本质上是一次彻头彻尾的内存拷贝（Deep Copy）。对于一帧 1080P 的画面来说，一秒拷贝 30 次，CPU 和内存带宽会被大量消耗，同时频繁申请大数组会引发严重的 Java GC 抖动（内存抖动）。
 
 **🗣️ 面试标准回答：**
+
 > “音视频数据量太大了，绝不能直接用 `byte[]` 传来传去，会有严重的拷贝损耗和 GC 抖动。
 > 我们的做法是利用 **零拷贝（Zero Copy）思想**。
-> 具体来说，我们使用 **`DirectByteBuffer` (直接内存)**。在 C++ 层分配好内存后，通过 JNI 的 `NewDirectByteBuffer` API，将这块内存的指针直接映射给 Java 层。Java 层拿到的这个 `ByteBuffer`，其实底层指向的就是 C++ 的那块内存。这样两边读写的是同一块物理内存，完全省去了数据拷贝的开销。”
+> 具体来说，我们使用 `**DirectByteBuffer` (直接内存)**。在 C++层分配好内存后，通过 JNI 的 `NewDirectByteBuffer` API，将这块内存的指针直接映射给 Java 层。Java 层拿到的这个 `ByteBuffer`，其实底层指向的就是 C++ 的那块内存。这样两边读写的是同一块物理内存，完全省去了数据拷贝的开销。”
 
 ---
 
 ## 考点 5：JNI_OnLoad 是做什么的？静态注册和动态注册有什么区别？
 
 **底层原理：**
-*   **静态注册**：按照固定命名规则（`Java_包名_类名_方法名`）暴露 C 函数。JVM 在第一次调用时去 SO 库里按名字搜索绑定。
-*   **动态注册**：在 SO 库加载的入口 `JNI_OnLoad` 中，开发者自己搞一个映射数组，主动调用 `RegisterNatives` 把 Java 方法和 C++ 函数指针绑起来。
+
+- **静态注册**：按照固定命名规则（`Java_包名_类名_方法名`）暴露 C 函数。JVM 在第一次调用时去 SO 库里按名字搜索绑定。
+- **动态注册**：在 SO 库加载的入口 `JNI_OnLoad` 中，开发者自己搞一个映射数组，主动调用 `RegisterNatives` 把 Java 方法和 C++ 函数指针绑起来。
 
 **🗣️ 面试标准回答：**
+
 > “`JNI_OnLoad` 就相当于动态库被加载时的 `main` 函数，一般我们会在里面保存全局的 `JavaVM` 对象，并且做**动态注册**。
 > 以前传统的做法是**静态注册**，函数名又长又丑（比如 `Java_com_xxxx_...`），而且 JVM 首次调用时还要去按名字搜索，性能稍差，也容易被反编译破解。
 > 我们现在基本都用**动态注册**。就是在 `JNI_OnLoad` 里，准备一个 `JNINativeMethod` 数组，把 Java 的方法名和 C++ 的函数指针映射起来，然后调用 `env->RegisterNatives` 注册。这样函数名可以随便起，不仅更加安全，而且因为是直接绑定指针，首次调用的执行效率也更高。”
@@ -116,6 +191,8 @@ Java 的 `byte[]` 存放在 JVM 堆内存中，C++ 的 `uint8_t*` 存放在 Nati
 JNI 提供了很多 `GetXXX` 和 `ReleaseXXX` 成对出现的 API。当你获取 Java 数组或字符串交给 C++ 处理时，JVM 可能会在底层做数据拷贝。如果不调 `Release` 告诉 JVM “我用完了”，JVM 内部申请的那块临时内存就永远不会被释放。
 
 **🗣️ 面试标准回答：**
+
 > “除了忘记调用 `DeleteGlobalRef` 会导致 Java 对象泄漏外，JNI 内部资源没释放也是重灾区。
-> 最典型的就是字符串和数组操作。比如我们调用 `GetStringUTFChars` 把 Java 字符串转成 C++ 的 `char*`，或者用 `GetByteArrayElements` 获取数组指针。这些操作底层很可能发生了内存拷贝，相当于 JVM 借了一块内存给你用。
+> 最典型的就是字符串和数组操作。比如我们调用 `GetStringUTFChars` 把 Java 字符串转成 C++的 `char`*，或者用 `GetByteArrayElements` 获取数组指针。这些操作底层很可能发生了内存拷贝，相当于 JVM 借了一块内存给你用。
 > 用完之后，**必须成对地调用** `ReleaseStringUTFChars` 或 `ReleaseByteArrayElements`。如果忘了调用，这块底层内存就直接漏掉了。我们的做法是封装一些类似于 C++ 智能指针的 RAII 包装类，利用 C++ 的析构函数来自动调 Release，保证万无一失。”
+

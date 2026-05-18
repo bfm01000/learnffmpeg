@@ -678,7 +678,20 @@ C obj;
 C* pc = &obj;
 A* pa = pc; // 通常地址不变
 B* pb = pc; // 地址会调整到 B 子对象起始位置
+
+printf("pc = %p\n", (void*)pc);
+printf("pa = %p\n", (void*)pa);
+printf("pb = %p\n", (void*)pb);
+// 输出可以看到 pa 和 pb 的地址是不同的
+/*
+示例输出（实际地址由编译器和系统决定）:
+pc = 0x7ffxx
+pa = 0x7ffxx
+pb = 0x7ffxx+4
+*/
 ```
+
+
 
 这就是多继承下的 **指针调整**。如果涉及虚函数调用，编译器还可能通过 thunk 函数修正 `this` 指针，再跳转到真正的函数实现。
 

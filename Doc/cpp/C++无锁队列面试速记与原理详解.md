@@ -1,0 +1,386 @@
+# C++ 无锁队列面试速记与原理详解
+
+> **适用方向**：C++ 多线程、音视频 Pipeline、实时渲染、音频处理、低延迟队列  
+> **核心关键词**：`std::atomic`、CAS、SPSC、MPMC、环形缓冲区、内存序、ABA、伪共享  
+> **阅读建议**：先掌握 `mutex`、`condition_variable`、`std::atomic`，再看无锁队列。
+
+---
+
+## 一、面试速记
+
+### 1. 无锁队列是什么？
+
+无锁队列是一种不依赖 `std::mutex` 互斥锁的并发队列。它通常通过 `std::atomic`、CAS、环形缓冲区等方式，让多个线程在不阻塞、不进入内核态睡眠的情况下完成入队和出队。
+
+面试可以这样说：
+
+> 无锁队列不是“没有同步”，而是不用传统互斥锁。它通过原子操作保证共享状态的修改是安全的，避免线程因为抢锁进入阻塞状态。典型场景是音视频里的解码线程和渲染线程传递帧数据，或者音频线程传递 PCM 数据，要求延迟低、不能频繁阻塞。
+
+### 2. lock-free 是不是一定更快？
+
+不一定。
+
+无锁队列优势是避免阻塞和上下文切换，但它也会带来复杂度：
+
+- CAS 失败时可能反复自旋，浪费 CPU。
+- 多生产者多消费者实现很复杂。
+- 内存序写错很难排查。
+- 容易遇到 ABA、伪共享、内存回收等问题。
+
+面试可以这样回答：
+
+> 无锁队列适合高频、短任务、低延迟的场景，不适合所有场景。如果临界区很长，或者生产消费频率不高，普通 `mutex + condition_variable` 的阻塞队列反而更简单、更稳定。
+
+### 3. 最常见的无锁队列是哪种？
+
+工程里最常见、最容易写对的是 **SPSC Queue**：
+
+```text
+Single Producer Single Consumer
+单生产者单消费者队列
+```
+
+特点：
+
+- 只有一个线程写入。
+- 只有一个线程读取。
+- 生产者只改 `tail`。
+- 消费者只改 `head`。
+
+因为 `head` 和 `tail` 的写入责任完全分离，所以实现难度比 MPMC 队列低很多。
+
+---
+
+## 二、为什么 SPSC 队列可以做到无锁
+
+以环形缓冲区为例：
+
+```text
+buffer: [0] [1] [2] [3] [4] [5] [6] [7]
+          ↑                       ↑
+        head                    tail
+```
+
+约定：
+
+- `head`：消费者读取位置。
+- `tail`：生产者写入位置。
+- `tail + 1 == head`：队列满。
+- `head == tail`：队列空。
+
+关键点是：
+
+```text
+生产者只写 tail
+消费者只写 head
+```
+
+生产者入队时只需要：
+
+1. 看一下 `head`，判断是否满。
+2. 把数据写到 `buffer[tail]`。
+3. 更新 `tail`。
+
+消费者出队时只需要：
+
+1. 看一下 `tail`，判断是否空。
+2. 从 `buffer[head]` 读取数据。
+3. 更新 `head`。
+
+双方不会同时写同一个变量，因此不需要互斥锁。它们只需要通过原子变量保证“看见对方最新进度”和“数据写入顺序正确”。
+
+---
+
+## 三、SPSC 无锁队列代码示例
+
+下面是一个固定容量的 SPSC 环形队列。
+
+```cpp
+#include <atomic>
+#include <cstddef>
+#include <vector>
+
+template <typename T>
+class SPSCQueue {
+public:
+    explicit SPSCQueue(std::size_t capacity)
+        : capacity_(capacity + 1),
+          buffer_(capacity_),
+          head_(0),
+          tail_(0) {
+    }
+
+    bool push(const T& value) {
+        const std::size_t tail = tail_.load(std::memory_order_relaxed);
+        const std::size_t next_tail = next(tail);
+
+        if (next_tail == head_.load(std::memory_order_acquire)) {
+            return false; // 队列满
+        }
+
+        buffer_[tail] = value;
+
+        tail_.store(next_tail, std::memory_order_release);
+        return true;
+    }
+
+    bool pop(T& value) {
+        const std::size_t head = head_.load(std::memory_order_relaxed);
+
+        if (head == tail_.load(std::memory_order_acquire)) {
+            return false; // 队列空
+        }
+
+        value = buffer_[head];
+
+        head_.store(next(head), std::memory_order_release);
+        return true;
+    }
+
+private:
+    std::size_t next(std::size_t index) const {
+        return (index + 1) % capacity_;
+    }
+
+private:
+    const std::size_t capacity_;
+    std::vector<T> buffer_;
+
+    alignas(64) std::atomic<std::size_t> head_;
+    alignas(64) std::atomic<std::size_t> tail_;
+};
+```
+
+这里 `capacity + 1` 是为了空出一个槽位，方便区分“队列空”和“队列满”：
+
+```text
+head == tail              表示空
+next(tail) == head        表示满
+```
+
+---
+
+## 四、这段代码为什么线程安全
+
+### 1. 生产者写入顺序
+
+生产者入队：
+
+```cpp
+buffer_[tail] = value;
+tail_.store(next_tail, std::memory_order_release);
+```
+
+`release` 的含义是：在更新 `tail_` 之前，必须先保证 `buffer_[tail]` 的数据已经写好。
+
+也就是说，消费者只要看到新的 `tail_`，就一定能看到对应位置已经写入的数据。
+
+### 2. 消费者读取顺序
+
+消费者出队：
+
+```cpp
+if (head == tail_.load(std::memory_order_acquire)) {
+    return false;
+}
+
+value = buffer_[head];
+```
+
+`acquire` 的含义是：如果消费者读到了生产者 `release` 出来的新 `tail_`，那么后续读取 `buffer_[head]` 时，也能看到生产者之前写进去的数据。
+
+可以把它理解成：
+
+```text
+生产者：写数据 -> release 发布 tail
+消费者：acquire 读取 tail -> 读数据
+```
+
+这对 `release/acquire` 保证了跨线程的数据可见性。
+
+### 3. 为什么自己的指针可以 relaxed
+
+生产者自己读 `tail_`：
+
+```cpp
+tail_.load(std::memory_order_relaxed);
+```
+
+因为只有生产者会修改 `tail_`，不存在另一个线程同时写它。消费者只会读 `tail_`，不会写。
+
+消费者自己读 `head_` 也是同理：
+
+```cpp
+head_.load(std::memory_order_relaxed);
+```
+
+所以自己的进度指针用 `relaxed` 即可；读取对方指针时，需要 `acquire` 来同步对方发布的数据。
+
+---
+
+## 五、无锁队列和阻塞队列的区别
+
+### 阻塞队列
+
+典型写法：
+
+```cpp
+std::mutex mutex;
+std::condition_variable cv;
+std::queue<T> queue;
+```
+
+特点：
+
+- 队列空时消费者可以睡眠等待。
+- 队列满时生产者可以阻塞等待。
+- CPU 占用低。
+- 实现简单，适合大多数业务场景。
+
+### 无锁队列
+
+典型写法：
+
+```cpp
+std::atomic<std::size_t> head;
+std::atomic<std::size_t> tail;
+```
+
+特点：
+
+- 不使用互斥锁。
+- 满或空时通常返回失败，调用方决定重试、丢帧或降级。
+- 延迟更低。
+- 实现复杂，对内存序要求高。
+
+面试可以这样对比：
+
+> 阻塞队列适合吞吐优先、允许等待的场景；无锁队列适合实时性优先、不能轻易阻塞的场景。比如离线转码可以用阻塞队列，实时音频回调或高帧率渲染更适合无锁队列。
+
+---
+
+## 六、音视频场景下怎么用
+
+### 1. 解码线程到渲染线程
+
+```text
+解码线程 Producer
+    ↓ push VideoFrame
+SPSCQueue<VideoFrame>
+    ↓ pop VideoFrame
+渲染线程 Consumer
+```
+
+如果队列满：
+
+- 离线导出：可以等待或背压。
+- 实时预览：可以丢弃旧帧或新帧，保证低延迟。
+
+### 2. 音频线程
+
+音频回调线程通常对实时性要求极高，不适合在回调里加锁、分配内存或做阻塞 I/O。
+
+无锁队列常用于：
+
+- 主线程提前准备音频数据。
+- 音频线程从无锁队列读取 PCM block。
+- 队列空时填静音或做欠载处理。
+
+面试表达：
+
+> 音频线程里最怕阻塞，因为一旦错过回调时间就会爆音。无锁队列可以避免 mutex 竞争和条件变量等待，保证音频线程尽量只做固定成本的读操作。
+
+---
+
+## 七、常见坑
+
+### 1. 不要把 SPSC 当成 MPMC 用
+
+上面的队列只适合：
+
+```text
+一个生产者 + 一个消费者
+```
+
+如果多个线程同时 `push`，它们会同时修改 `tail_`，数据会被覆盖。
+
+如果多个线程同时 `pop`，它们会同时修改 `head_`，数据会被重复消费或跳过。
+
+多生产者多消费者需要更复杂的算法，比如基于 CAS 的 Michael-Scott Queue，或者每个槽位带 sequence number 的有界 MPMC 队列。
+
+### 2. `volatile` 不能替代 atomic
+
+错误理解：
+
+```cpp
+volatile int head;
+volatile int tail;
+```
+
+`volatile` 只限制编译器优化，不保证原子性，也不保证跨线程内存可见性。并发同步应该使用 `std::atomic`。
+
+### 3. 伪共享
+
+`head_` 和 `tail_` 分别被不同线程频繁修改。如果它们落在同一个 CPU cache line 中，会导致缓存行在两个核心之间反复失效。
+
+所以代码里用了：
+
+```cpp
+alignas(64) std::atomic<std::size_t> head_;
+alignas(64) std::atomic<std::size_t> tail_;
+```
+
+这能尽量让两个原子变量落在不同缓存行，减少伪共享。
+
+### 4. ABA 问题
+
+ABA 常见于基于指针 CAS 的无锁链表或无锁栈。
+
+比如线程看到指针是 A，准备 CAS；期间其他线程把 A 改成 B，又改回 A。第一个线程再看还是 A，以为没有变过，但实际上数据结构已经发生过变化。
+
+SPSC 环形队列通常不容易遇到经典 ABA，因为它不依赖节点指针 CAS。但 MPMC 链式队列、无锁栈、对象池回收时必须重点考虑 ABA。
+
+常见解决方式：
+
+- 指针加版本号。
+- hazard pointer。
+- epoch based reclamation。
+- 避免节点过早复用。
+
+### 5. 内存回收比入队出队更难
+
+无锁链表队列最大难点不是 CAS，而是节点释放。
+
+因为一个线程准备访问某个节点时，另一个线程可能已经把它出队并释放了。此时会产生野指针。
+
+所以工程里如果不是非常必要，优先使用固定容量环形队列，避免动态分配和复杂内存回收。
+
+---
+
+## 八、什么时候不建议用无锁队列
+
+以下场景不建议优先使用无锁队列：
+
+- 队列操作频率不高。
+- 临界区内部逻辑很重。
+- 业务允许阻塞等待。
+- 需要多个生产者多个消费者，但团队没有充分测试经验。
+- 数据生命周期复杂，需要频繁动态分配和释放。
+- 正确性比极限延迟更重要。
+
+更稳妥的建议：
+
+> 默认先用 `mutex + condition_variable`。只有当性能分析证明锁竞争是瓶颈，并且场景适合 SPSC 或固定容量队列时，再考虑无锁队列。
+
+---
+
+## 九、面试总结
+
+可以这样回答：
+
+> 无锁队列是通过原子操作而不是互斥锁来实现线程安全的队列。最常见也最容易写对的是 SPSC 环形队列，因为生产者只修改 `tail`，消费者只修改 `head`，双方通过 `atomic` 和 `release/acquire` 保证数据可见性。它的优势是低延迟、不会因为抢锁进入内核阻塞，适合音视频实时 Pipeline、音频回调、高频帧队列等场景。但无锁不等于一定更快，MPMC、ABA、内存回收、伪共享和内存序都会增加复杂度。工程上应该先用普通阻塞队列，只有确认锁竞争成为瓶颈时，再选择无锁方案。
+
+如果结合项目经验，可以补一句：
+
+> 在音视频项目里，我会优先把无锁队列用于单生产者单消费者链路，比如解码线程到渲染线程、采集线程到编码线程；如果是复杂的多生产者多消费者模型，我更倾向于使用成熟库或阻塞队列，避免自己手写高风险 MPMC 无锁结构。
+
