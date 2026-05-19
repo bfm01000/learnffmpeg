@@ -1,0 +1,23 @@
+Doc/cpp/智能指针.md
+  3aa752aae59bbe2c 70-87,102-132
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "8a8ad6ef978d7d75bb667ece052d63faac0c3002",
+  "prompts": {
+    "3aa752aae59bbe2c": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "924dc68f-a6e3-4392-8df8-c831704c176a",
+        "model": "default"
+      },
+      "human_author": "dumenglin",
+      "messages": [],
+      "total_additions": 49,
+      "total_deletions": 0,
+      "accepted_lines": 49,
+      "overriden_lines": 0
+    }
+  }
+}
