@@ -1,0 +1,77 @@
+Doc/cpp/C++锁面试速记与原理详解.md
+  f4b8232515dbb921 29-147
+av_interview/info/list.md
+  2876fc0803b9858a 1-221
+Doc/cpp/C++信号量面试速记与原理详解.md
+  bd16f79dcf80b58a 1-352
+av_interview/JD/XHS.md
+  cc3cfba28d656b18 1-132
+av_interview/info/info2.md
+  2876fc0803b9858a 1-63
+av_interview/info/info.md
+  2876fc0803b9858a 1-171
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "0e0a92f3900d54df59b5bbaab82f3059fe300af7",
+  "prompts": {
+    "2876fc0803b9858a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f8569289-5b01-4a31-8842-4b9c9a62c92e",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "dumenglin",
+      "messages": [],
+      "total_additions": 455,
+      "total_deletions": 80,
+      "accepted_lines": 455,
+      "overriden_lines": 0
+    },
+    "bd16f79dcf80b58a": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "7d980acd-bcdd-4dba-88d0-042db6965f97",
+        "model": "default"
+      },
+      "human_author": "dumenglin",
+      "messages": [],
+      "total_additions": 365,
+      "total_deletions": 0,
+      "accepted_lines": 352,
+      "overriden_lines": 0
+    },
+    "cc3cfba28d656b18": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "3b865ee3-8cfa-4bf4-addb-f1a0910a4f45",
+        "model": "default"
+      },
+      "human_author": "dumenglin",
+      "messages": [],
+      "total_additions": 197,
+      "total_deletions": 65,
+      "accepted_lines": 132,
+      "overriden_lines": 0
+    },
+    "f4b8232515dbb921": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "30a76f4c-6882-48c4-8cdb-82184622d897",
+        "model": "default"
+      },
+      "human_author": "dumenglin",
+      "messages": [],
+      "total_additions": 119,
+      "total_deletions": 0,
+      "accepted_lines": 119,
+      "overriden_lines": 0
+    }
+  },
+  "humans": {
+    "h_3fc7cab4c90312": {
+      "author": "dumenglin"
+    }
+  }
+}
