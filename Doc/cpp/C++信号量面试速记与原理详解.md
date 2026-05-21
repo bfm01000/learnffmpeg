@@ -1,0 +1,352 @@
+# C++ 信号量：面试速记与原理详解
+
+> **适用方向**：Android / iOS / FFmpeg 音视频开发，C++ 多线程，Pipeline / 线程池 / 连接池  
+> **难度**：⭐⭐⭐  
+> **预计阅读**：速记 8 分钟｜全文 25 分钟  
+> **关联文档**：[[C++锁面试速记与原理详解]]（mutex、条件变量）、[[C++无锁队列面试速记与原理详解]]（SPSC 队列）
+
+---
+
+## 📌 第一部分：面试速记（考前 8 分钟扫一遍）
+
+### 一句话核心
+
+> **信号量（Semaphore）是一个带非负计数的同步原语：`wait/acquire` 把计数减 1（为 0 则阻塞），`post/release` 把计数加 1 并可能唤醒等待者——用来表示「还剩多少份资源」或「发生了多少次事件」，而不是像 mutex 那样强调「谁占着临界区」。**
+
+### 面试官常问问题 + 标准口语化回答
+
+---
+
+#### 开场题：用一句话说清楚什么是信号量？
+
+**🗣️ 面试标准回答：**
+
+> "信号量就是一个**非负计数器**加上 wait/post 两套操作：线程想占用一份资源就先 `wait`（计数减 1，减到 0 就等），用完就 `post`（计数加 1，顺便唤醒等在 0 上的线程）。所以它天然适合表达**还有几个空位、还能进几个线程**，而不只是 mutex 那种『同一时刻只允许一个人进临界区』。"
+
+---
+
+#### 必考题：信号量和 mutex 有什么区别？
+
+**考察意图：** 很多人把二值信号量当成 mutex，必须讲清「所有者」和语义。
+
+**🗣️ 面试标准回答：**
+
+> "三个关键区别：
+>
+> 1. **语义**：mutex 保护的是**临界区**——谁 lock 谁 unlock，强调互斥访问同一块共享数据；信号量表达的是**资源份数或事件计数**——可以 A 线程 post、B 线程 wait，不要求同一个线程配对。
+> 2. **所有者**：`std::mutex` 有隐式所有者，未持有锁不能 unlock；信号量**没有所有者**，post 不必是当初 wait 的那个线程（适合生产者通知消费者）。
+> 3. **二值信号量 ≠ mutex**：二值信号量计数只有 0/1，看起来像互斥，但没有「必须由加锁者解锁」的规则，误用容易破坏不变量；C++ 里互斥仍应优先 `mutex`，需要「资源计数」才用 `binary_semaphore` 或计数信号量。
+>
+> 口诀：**mutex 管『这段代码同时只能一个人跑』，信号量管『还剩几份资源 / 发生了几次信号』。**"
+
+**👨‍💻 面试官追问：**
+
+> Q: 那 unlock 不是也可以别的线程调吗？
+> A: 对 `std::mutex` 来说，未持有就 unlock 是未定义行为；信号量 post 不要求之前 wait 过，这是设计上的根本差异。
+
+---
+
+#### 高频题：二值信号量和计数信号量分别用在哪？
+
+**🗣️ 面试标准回答：**
+
+> "**计数信号量**初始值设为 N，表示 N 个同类资源，例如线程池最多同时跑 N 个任务、连接池 N 条连接、环形缓冲区 N 个空槽。
+>
+> **二值信号量**（C++20 的 `std::binary_semaphore` 即 `counting_semaphore<1>`）计数只有 0 和 1，适合**单次事件通知**（类似「有一个任务就绪」），但和 `condition_variable` 比，它不绑定 mutex 保护的条件变量，语义更轻、也更容易用错。
+>
+> 工程上：**限并发、池化、空满槽**用计数；**严格互斥改共享结构**用 mutex，不要拿二值信号量替代 mutex。"
+
+---
+
+#### 高频题：信号量和条件变量都能「等」，怎么选？
+
+**🗣️ 面试标准回答：**
+
+> "`condition_variable` 必须和 `mutex` 一起用：先锁保护共享状态，再 `wait` 检查**复杂条件**（队列非空、状态机到某态），适合条件难以用单个整数表达的场景。
+>
+> 信号量适合**条件本身就是一个非负整数**的场景：空槽个数、满槽个数、剩余许可证数量。生产者消费者经典模型就是：`empty` 信号量（还能放几个）、`full` 信号量（还能取几个），再配合 mutex 保护队列结构。
+>
+> 选型：**复杂布尔/结构条件 → mutex + condition_variable；纯计数型资源 → 信号量（常仍要 mutex 保护队列本体）。**"
+
+---
+
+#### 实战题：生产者消费者怎么用信号量？
+
+**🗣️ 面试标准回答：**
+
+> "有界队列容量为 `CAP`：
+> - `empty_sem` 初值 `CAP`：表示还能 push 几个；
+> - `full_sem` 初值 `0`：表示还能 pop 几个；
+> - `mtx` 保护 `std::queue` 的入队出队指针。
+>
+> 生产者：`wait(empty)` → `lock(mtx)` → push → `unlock` → `post(full)`。
+> 消费者：`wait(full)` → `lock(mtx)` → pop → `unlock` → `post(empty)`。
+>
+> 这样**阻塞发生在信号量上**（等空位/等数据），mutex 只包很短的对队列修改，和「只用 mutex + condition_variable」等价，但信号量把『还有几个空位』直接编码进计数，思路更直观。"
+
+---
+
+#### 语言题：C++ 里信号量怎么用？C++11 有吗？
+
+**🗣️ 面试标准回答：**
+
+> "标准库 **C++20** 才有 `<semaphore>`：`std::counting_semaphore<LeastMax>` 和 `std::binary_semaphore`。
+> - `acquire()` / `release()` 对应 P/V（也可用 `try_acquire`、`try_acquire_for`）。
+> - 模板参数 `LeastMax` 是编译期最大值，类型用 `std::ptrdiff_t` 计数。
+>
+> C++17 及以前工程里常见：**POSIX** `sem_init` / `sem_wait` / `sem_post`，或 **平台 API**（Windows `CreateSemaphore`），或自己用 **mutex + condition_variable + 计数** 封装一个 counting semaphore。
+>
+> 面试可以说：**新代码 C++20 用标准库；维护老代码或要跨进程命名信号量时仍看 POSIX。**"
+
+---
+
+#### 原理题：信号量底层怎么实现？
+
+**🗣️ 面试标准回答（简短版）：**
+
+> "用户态维护一个原子计数：`post` 原子加 1，若加之前有人等在 0 上则唤醒；`wait` 尝试减 1，成功则返回，失败（已是 0）则**进内核睡眠**（Linux 上常经 futex），避免忙等。
+>
+> 和 mutex 类似，**慢路径**才 syscall；快路径纯用户态原子操作。POSIX 无名信号量、命名信号量（`sem_open`）可跨进程，这是 mutex（通常 pthread 进程内）和 C++ `std::mutex` 经常做不到或不便做的场景之一。"
+
+---
+
+#### 收尾题：用信号量会死锁吗？和锁的对比记忆？
+
+**🗣️ 面试标准回答：**
+
+> "会。多个信号量如果 `wait` 顺序不一致（一个先等 A 再等 B，另一个先 B 后 A），和两把 mutex 一样会死锁。办法同样是**固定顺序**或**减少同时持有的同步原语数量**。
+>
+> 和 [[C++锁面试速记与原理详解]] 放一起记：
+> - **mutex**：互斥 + 所有者，保护临界区；
+> - **condition_variable**：配合 mutex，等复杂条件；
+> - **信号量**：计数型资源 / 事件，可无所有者跨线程 post；
+> - **atomic**：单变量无阻塞（或极短）同步。"
+
+---
+
+## 二、使用场景（什么时候该用信号量）
+
+| 场景 | 为什么用信号量 | 典型初值 |
+|---|---|---|
+| 有界生产者消费者 | `empty` / `full` 直接表示空槽、已有数据个数 | `empty=N`, `full=0` |
+| 线程池 / 任务槽位 | 限制同时执行的 worker 数量 | `=N`（最大并发） |
+| 连接池 / 对象池 | 限制同时借出的连接数 | `=池大小` |
+| 跨进程同步 | POSIX 命名信号量 `sem_open` | 按业务约定 |
+| 单次唤醒（慎用） | 二值信号量作「事件计数」 | `0`，post 一次 wake 一个 |
+
+**不适合单独用信号量的情况：**
+
+- 只保护「一段修改共享结构的代码」、没有「份数」概念 → 用 **mutex**。
+- 条件是「队列非空且状态==Running」这类组合逻辑 → **mutex + condition_variable**（或条件 + 信号量混用，但别重复表达同一条件）。
+
+---
+
+## 三、原理详解
+
+### 1. P / V 操作与不变量
+
+经典定义（Dijkstra）：
+
+- **P(wait / acquire)**：若计数 > 0，减 1 并继续；否则阻塞。
+- **V(signal / post / release)**：计数加 1；若有线程在 P 上阻塞，唤醒其中一个（或按策略唤醒）。
+
+不变量（直观理解）：
+
+```text
+计数 = 当前可用资源数（或「尚未被消费的 post 次数」）
+所有 wait 消耗的资源，最终应由 post 归还（或初始值体现预分配）
+```
+
+**二值信号量**：计数 ∈ {0, 1}，P 把 1→0，V 把 0→1；多次 V 不会无限累加（实现上通常 cap 在 1，C++ `binary_semaphore` 语义按标准）。
+
+### 2. 与 mutex、条件变量的关系图
+
+```text
+                    ┌─────────────────────────────────────┐
+                    │         共享数据（队列、池）           │
+                    └─────────────────────────────────────┘
+                                      │
+          ┌───────────────────────────┼───────────────────────────┐
+          │                           │                           │
+    std::mutex                   counting_semaphore          condition_variable
+    保护临界区                    空槽/满槽/许可证数              + mutex
+    谁加锁谁解锁                  无所有者，可跨线程 V              等复杂条件
+```
+
+### 3. 生产者消费者（C++20 示例）
+
+```cpp
+#include <semaphore>
+#include <queue>
+#include <mutex>
+#include <thread>
+
+template<std::ptrdiff_t Cap>
+class BoundedQueue {
+public:
+    void push(int v) {
+        empty_.acquire();           // 等空槽
+        {
+            std::lock_guard<std::mutex> lk(mtx_);
+            q_.push(v);
+        }
+        full_.release();            // 多一个可消费项
+    }
+
+    int pop() {
+        full_.acquire();            // 等有数据
+        int v;
+        {
+            std::lock_guard<std::mutex> lk(mtx_);
+            v = q_.front();
+            q_.pop();
+        }
+        empty_.release();           // 归还空槽
+        return v;
+    }
+
+private:
+    std::queue<int> q_;
+    std::mutex mtx_;
+    std::counting_semaphore<Cap> empty_{Cap};  // 还能放几个
+    std::counting_semaphore<Cap> full_{0};     // 还能取几个
+};
+```
+
+要点：**信号量负责「能不能做」；mutex 负责「做的时候队列结构不被破坏」**。
+
+### 4. 限流并发（线程池槽位）
+
+```cpp
+#include <semaphore>
+#include <thread>
+#include <vector>
+
+void worker_pool(std::vector<std::function<void()>> tasks) {
+    const std::ptrdiff_t kMaxConcurrent = 4;
+    std::counting_semaphore<kMaxConcurrent> slots{kMaxConcurrent};
+
+    for (auto& task : tasks) {
+        slots.acquire();  // 占一个槽，满了就阻塞
+        std::thread([&task, &slots] {
+            task();
+            slots.release();
+        }).detach();
+    }
+    // 实际工程还要 join、异常、析构安全，这里仅示语义
+}
+```
+
+### 5. POSIX 无名信号量（C++17 及以前常见）
+
+```cpp
+#include <semaphore.h>
+
+sem_t sem;
+sem_init(&sem, 0, 3);   // 初值 3，pshared=0 表示线程间
+
+void wait_slot() { sem_wait(&sem); }
+void give_slot() { sem_post(&sem); }
+
+sem_destroy(&sem);
+```
+
+跨进程用 **命名信号量**：`sem_open("my_sem", O_CREAT, 0644, initial_value)`，用完 `sem_close` / `sem_unlink`。
+
+### 6. 用 mutex + condition_variable 自己实现计数信号量（理解原理）
+
+```cpp
+class CountingSemaphore {
+public:
+    explicit CountingSemaphore(std::ptrdiff_t count) : count_(count) {}
+
+    void acquire() {
+        std::unique_lock<std::mutex> lk(mtx_);
+        cv_.wait(lk, [this] { return count_ > 0; });
+        --count_;
+    }
+
+    void release() {
+        {
+            std::lock_guard<std::mutex> lk(mtx_);
+            ++count_;
+        }
+        cv_.notify_one();
+    }
+
+private:
+    std::mutex mtx_;
+    std::condition_variable cv_;
+    std::ptrdiff_t count_;
+};
+```
+
+面试可说：**标准库信号量在实现上仍是原子 + 阻塞，和这套逻辑等价，但通常更少锁竞争、可走 futex 快路径。**
+
+### 7. C++20 标准 API 速查
+
+```cpp
+#include <semaphore>
+
+std::counting_semaphore<10> sem(3);  // 最多 10，当前 3
+sem.acquire();
+sem.try_acquire();
+sem.try_acquire_for(std::chrono::milliseconds(100));
+sem.release();
+
+std::binary_semaphore bin(1);      // 等价 counting_semaphore<1>
+bin.acquire();
+bin.release();
+```
+
+注意：`release(n)` 一次释放 n（C++20），相当于连续 V  n 次。
+
+---
+
+## 四、常见坑与面试加分点
+
+| 坑 | 说明 |
+|---|---|
+| 用二值信号量代替 mutex 保护队列 | 没有所有者，别的线程误 `release` 会把计数搞乱 |
+| 只 signal 不保护数据结构 | `post/full` 之前必须先在同一锁下把数据写好 |
+| 忘记有界队列的初始值 | `empty` 初值应是容量，`full` 初值应是 0 |
+| C++17 面试写 `std::semaphore` | 应说 C++20 或 POSIX / 自封装 |
+| 和「信号」混淆 | 进程间 SIGINT 等是 OS 信号机制，和 synchronization semaphore 不是一回事 |
+
+**加分一句（音视频 Pipeline）：**
+
+> "编码线程往发送队列塞包、网络线程取包，除了 mutex 保护队列，还可以用 `empty/full` 信号量做**背压**：网络慢时 `empty` 被耗尽，编码端在 `acquire(empty)` 上阻塞，避免无界内存涨；这和条件变量 `wait(队列非满)` 是同一类建模，只是计数更直观。"
+
+---
+
+## 五、速记对照表：同步原语怎么选
+
+| 需求 | 首选 |
+|---|---|
+| 互斥改共享结构 | `std::mutex` + RAII |
+| 等「队列非空」等复杂条件 | `mutex` + `condition_variable` |
+| 等「还有 k 个空位 / 许可证」 | `counting_semaphore` |
+| 单变量标志、无阻塞 | `std::atomic` |
+| 跨进程资源计数 | POSIX 命名信号量 / 共享内存 + 同步 |
+| 极高频、已证明锁是热点 | 无锁结构（见无锁队列文档） |
+
+---
+
+## 六、自测 5 题
+
+1. 一句话定义信号量，并说出 P/V 各做什么。  
+2. 为什么二值信号量不能简单替代 mutex？  
+3. 有界队列容量 8，`empty` 和 `full` 初值各是多少？  
+4. C++20 里二值信号量的类型名是什么？  
+5. 信号量和条件变量都阻塞线程，生产消费模型里你会怎么组合 mutex？
+
+<details>
+<summary>参考答案</summary>
+
+1. 非负计数同步原语；P(wait) 减 1，为 0 阻塞；V(post) 加 1 并可能唤醒。  
+2. mutex 有所有者且必须成对；二值信号量无所有者，语义是资源/事件计数，误 release 会破坏互斥假设。  
+3. `empty=8`，`full=0`。  
+4. `std::binary_semaphore`（`std::counting_semaphore<1>`）。  
+5. `empty/full`（或 condvar）管「能否操作」；`mutex` 管 push/pop 时队列结构一致性。
+
+</details>
