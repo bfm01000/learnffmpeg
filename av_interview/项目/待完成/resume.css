@@ -1,0 +1,100 @@
+@page {
+  size: A4;
+  margin: 12mm 16mm 14mm 16mm;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: "PingFang SC", "Hiragino Sans GB", -apple-system, "Helvetica Neue", Arial, sans-serif;
+  font-size: 10.5pt;
+  line-height: 1.65;
+  color: #2d3748;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+h1, h2, h3, h4 {
+  color: #1a365d;
+  font-weight: 600;
+  margin-top: 0;
+  letter-spacing: 0.3px;
+  page-break-after: avoid;
+}
+
+h3 {
+  font-size: 13.5pt;
+  margin: 18px 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 2px solid #2c5282;
+}
+
+h3:first-of-type {
+  margin-top: 0;
+}
+
+h4 {
+  font-size: 11pt;
+  color: #2c5282;
+  margin: 14px 0 6px;
+  padding-left: 10px;
+  border-left: 3px solid #4299e1;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+p {
+  margin: 4px 0;
+}
+
+ul {
+  margin: 6px 0 10px;
+  padding-left: 20px;
+}
+
+ul li {
+  margin-bottom: 5px;
+  text-align: justify;
+  page-break-inside: avoid;
+}
+
+ul li::marker {
+  color: #4299e1;
+}
+
+strong {
+  color: #1a365d;
+  font-weight: 600;
+}
+
+em {
+  color: #4a5568;
+  font-style: normal;
+  font-weight: 500;
+}
+
+hr {
+  display: none;
+}
+
+code {
+  display: inline-block;
+  background: #ebf4ff;
+  color: #2c5282;
+  padding: 2px 9px;
+  border-radius: 12px;
+  font-size: 9.5pt;
+  font-family: inherit;
+  margin: 3px 3px 3px 0;
+  border: 1px solid #bee3f8;
+}
+
+/* 首段公司+岗位行 */
+h3 + p {
+  font-size: 11pt;
+  color: #1a365d;
+}

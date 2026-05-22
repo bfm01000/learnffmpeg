@@ -25,3 +25,10 @@
 build/
 .cache/
 .vscode
+
+# Claude Code 本地配置
+.claude/
+
+# 简历中间产物（仅保留 self-v2.pdf 作为最终版）
+av_interview/项目/待完成/self.pdf
+av_interview/项目/待完成/self-sv.pdf
