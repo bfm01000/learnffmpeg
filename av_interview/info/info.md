@@ -6,14 +6,14 @@
 | **工作年限** | 近 5 年（2021.07 至今）                  |
 | **教育背景** | 西安科技大学 · 本科 · 2021.07 毕业       |
 | **联系方式** | 电话 / 邮箱（投递时按目标公司填写）      |
-| **现居城市** | 深圳（可考虑：杭州 / 上海 / 北京 / 远程）|
+| **现居城市** | 深圳|
 
 ---
 
 ## 一、个人优势
 
 - **5 年扎根移动端 C++ 音视频底层**，主导过 4K 直播、低时延预览、自动剪辑三类典型音视频 Pipeline 的性能攻坚，从架构设计到底层踩坑都有完整的复盘沉淀。
-- **真实玩过硬件零拷贝与异构调度**：在影石运动相机 SoC 形态下，打通 `GPU → AHardwareBuffer → VPU` 的物理级零拷贝链路，熟悉 Gralloc / DMA-BUF / Sync Fence / Surface 直通这一套硬件 Buffer 流转机制。
+- **硬件零拷贝与异构调度**：在影石运动相机 SoC 形态下，打通 `GPU → AHardwareBuffer → VPU` 的物理级零拷贝链路，熟悉 Gralloc / DMA-BUF / Sync Fence / Surface 直通这一套硬件 Buffer 流转机制。
 - **数据驱动的性能调优习惯**：所有优化先做全链路埋点（自研 `SFT_SCOPE` RAII 耗时统计 + 10s 平均聚合），用控制变量法定位根因，不靠猜测。
 - **跨平台 SDK 工程化经验**：C++ 写核心 Pipeline，通过 JNI / Objective-C++ 桥接 Android 与 iOS 双端，熟悉 ABI 兼容、生命周期管理、多线程对象安全释放等 SDK 级踩坑。
 - **会刨根问底**：自动剪辑 Smart Seek 时直接读 FFmpeg 的 `AVStream->index_entries`（即 MP4 `stss` Box 索引）做关键帧决策；定位 4K 直播瓶颈时翻 OpenGL 显存 Tiled / Linear 布局与 De-tiling 的原理。
