@@ -1,0 +1,95 @@
+project/WebRTC/阶段一-WebRTC架构总览.md
+  e762407b2d285ba7 1-153,155-245,247-291,295-297,301-303,307-309,313-321
+project/WebRTC/WebRTC架构学习提示词.md
+  2876fc0803b9858a 2-4,16-22,47-67,69,73,79-91,93-95,108,111,113-115,118-136,146-151,153-157,168-169
+  e762407b2d285ba7 74-78,112
+  bbae29bead671fa7 1,5-15,23-46,68,70-72,92,96-107,109-110,116-117,137-145,152,158-167,170
+Doc/ffmpeg/cpp音视频开发音频问题与面试指南.md
+  ad6cdca66302f85c 1-1161
+av_interview/info/info.md
+  h_3fc7cab4c90312 9,16
+todo.md
+  h_3fc7cab4c90312 1
+Doc/JNI/JNI面试高频考点与标准回答大全.md
+  h_3fc7cab4c90312 14
+project/WebRTC/阶段零-音视频基础self-check.md
+  bbae29bead671fa7 1-29,31,50-57,77,79,81-90,92-647
+  e049c26db5945740 30,32-49,58-76,78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "c4108c69be66edb9b2328fb9b63db9e962c2e4dd",
+  "prompts": {
+    "2876fc0803b9858a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f8569289-5b01-4a31-8842-4b9c9a62c92e",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "dumenglin",
+      "messages": [],
+      "total_additions": 107,
+      "total_deletions": 0,
+      "accepted_lines": 86,
+      "overriden_lines": 0
+    },
+    "ad6cdca66302f85c": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "2b0b626a-9b84-4d04-8daa-612341775f75",
+        "model": "gpt-5.5"
+      },
+      "human_author": "dumenglin",
+      "messages": [],
+      "total_additions": 1161,
+      "total_deletions": 0,
+      "accepted_lines": 1161,
+      "overriden_lines": 0
+    },
+    "bbae29bead671fa7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c9051bd0-07ad-498e-b095-39a8f7475bf7",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "dumenglin",
+      "messages": [],
+      "total_additions": 681,
+      "total_deletions": 16,
+      "accepted_lines": 677,
+      "overriden_lines": 2
+    },
+    "e049c26db5945740": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "2bc761bf-3466-4fb3-b527-ffba91b8d528",
+        "model": "gpt-5.5"
+      },
+      "human_author": "dumenglin",
+      "messages": [],
+      "total_additions": 39,
+      "total_deletions": 2,
+      "accepted_lines": 39,
+      "overriden_lines": 0
+    },
+    "e762407b2d285ba7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c6bd80d9-613d-4926-99d7-fedcc756199b",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "dumenglin",
+      "messages": [],
+      "total_additions": 315,
+      "total_deletions": 7,
+      "accepted_lines": 280,
+      "overriden_lines": 14
+    }
+  },
+  "humans": {
+    "h_3fc7cab4c90312": {
+      "author": "dumenglin"
+    }
+  }
+}
