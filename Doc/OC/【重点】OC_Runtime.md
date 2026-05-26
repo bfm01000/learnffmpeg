@@ -16,7 +16,7 @@
 >
 > **Q4：讲一下对 isa 指针的理解？（高频追问：如果调用父类方法，只靠 isa 能找到吗？具体是怎么找的？）**
 > 🗣️ **口语化回答**：“在 OC 里，`isa` 指针主要负责‘找类型’，而 `superclass` 指针负责‘找继承’，它们俩是配合工作的。
-> 首先说 `isa`：实例对象的 `isa` 指向类对象，类对象的 `isa` 指向元类，元类的 `isa` 最终指向根元类形成闭环。`**isa` 的作用仅仅是决定了方法查找的【第一站（起点）】**（实例方法第一站去类对象找，类方法第一站去元类找）。
+> 首先说 `isa`：实例对象的 `isa` 指向类对象，类对象的 `isa` 指向元类，普通元类的 `isa` 最终指向根元类，根元类的 `isa` 指向自己形成闭环。注意：**根类是 `NSObject`，根元类不是 `NSObject` 本身，而是 `NSObject` 的元类对象**。`**isa` 的作用仅仅是决定了方法查找的【第一站（起点）】**（实例方法第一站去类对象找，类方法第一站去元类找）。
 >
 > **具体是怎么顺着找的呢？（结合 cache 和 method_list）**
 > 假设 B 继承 A，我们用 B 的实例调用 A 的方法：
@@ -31,6 +31,10 @@
 >   - 如果 A 类还找不到，就继续顺着 A 的 `superclass` 找，直到根类（NSObject）。
 >
 > **如果是调用父类的【类方法】**，原理一模一样：第一站顺着 B 类的 `isa` 找到 **B 的元类**，找不到就顺着 `superclass` 找到 **A 的元类**，在里面查 cache 和 method_list。
+>
+> **🔥 追问：子类重写了父类方法后，想调用父类实现必须用 `super` 吗？**
+> 🗣️ **口语化回答**：“对，通常必须用 `[super method]`。因为 `[self method]` 还是给当前对象发消息，Runtime 会从当前对象的实际类开始查找；如果子类已经重写了这个方法，就会再次命中子类实现，甚至可能递归调用自己。
+> `[super method]` 不是换了一个父类对象，`super` 本身也不是对象。它只是告诉编译器生成 `objc_msgSendSuper`，接收者依然是当前的 `self`，但方法查找起点从父类开始。比如重写 `viewDidLoad` 时写 `[super viewDidLoad]`，就是绕过子类自己的实现，去执行父类的 `viewDidLoad`。”
 >
 > **🔥 极限深挖拷问：实例对象能直接调用类方法吗？（比如 `[person classMethod]`）**
 > 🗣️ **口语化回答**：“在 OC 里绝对不能！这就好比你拿着一张去北京的高铁票，却想坐飞机去上海。
@@ -98,9 +102,45 @@ struct objc_class {
 1. **实例对象（Instance Object）**：我们平时 `[[Person alloc] init]` 创建出来的对象。它的内部存着具体的属性值，它的 `isa` 指针指向类对象。当你调用 `[person eat]`（实例方法）时，它会通过 `isa` 找到类对象，在类对象的方法列表里找 `eat` 的实现。
 2. **类对象（Class Object）**：在内存中全局只有一份，存储着类的成员变量类型、实例方法列表、协议等信息。因为类本身也是对象，那调用 `[Person run]`（类方法）时去哪找这个方法呢？这就引出了元类。类对象的 `isa` 指针指向元类。
 3. **元类（Meta Class）**：它是类对象的“类”。它专门用来存储**类方法**。当你调用类方法时，Runtime 会顺着类对象的 `isa` 找到元类，在元类的方法列表里查找。
-4. **根元类（Root Meta Class）**：所有元类的基类（通常是 NSObject 的元类）。为了让所有的 `isa` 指针最终有个归宿形成闭环，根元类的 `isa` 指针指向它自己。
+4. **根类（Root Class）**：通常就是 `NSObject`。它是大多数 OC 类继承链的终点，`NSObject` 类对象的 `superclass` 是 `nil`。
+5. **根元类（Root Meta Class）**：不是 `NSObject` 本身，而是 **`NSObject` 的元类对象**。为了让所有的 `isa` 指针最终有个归宿形成闭环，根元类的 `isa` 指针指向它自己。
 
-**💻 代码实战：如何获取与区分这四种对象？**
+**举个具体例子：**
+
+```objc
+@interface Person : NSObject
+@end
+```
+
+它的核心关系可以记成下面这张表：
+
+```text
+Person 实例对象 p
+    isa -> Person 类对象
+
+Person 类对象
+    isa        -> Person 元类
+    superclass -> NSObject 类对象
+
+Person 元类
+    isa        -> NSObject 元类      // 最终指向根元类
+    superclass -> NSObject 元类      // 类方法继承链
+
+NSObject 类对象
+    isa        -> NSObject 元类      // NSObject 的元类就是根元类
+    superclass -> nil
+
+NSObject 元类
+    isa        -> NSObject 元类      // 根元类 isa 指向自己
+    superclass -> NSObject 类对象    // 特殊点：根元类 superclass 指向根类
+```
+
+所以这两个概念一定要分清：
+
+- **根类**：`NSObject`，也就是 `[NSObject class]` 拿到的类对象。
+- **根元类**：`NSObject` 的元类，也就是 `object_getClass([NSObject class])` 拿到的元类对象。
+
+**💻 代码实战：如何获取与区分类对象、元类和根元类？**
 
 ```objc
 // 1. 实例对象：通过 alloc 创建，每次地址都不同
@@ -114,12 +154,17 @@ Class personClass = [Person class];
 Class personMetaClass = object_getClass(personClass);
 // ⚠️ 极其容易丢分的坑点：[personClass class] 返回的依然是 personClass 自己！不会返回元类！
 
-// 4. 根元类：继续获取元类的 isa 指向
+// 4. 根元类：继续获取普通元类的 isa 指向
 Class rootMetaClass = object_getClass(personMetaClass);
+// 如果 Person 直接继承 NSObject，这里拿到的就是 NSObject 的元类
 
 // 验证闭环：对根元类再调一次，发现返回的指针地址还是它自己
 Class rootRoot = object_getClass(rootMetaClass);
 // 此时 rootMetaClass == rootRoot
+
+// 也可以直接从 NSObject 类对象拿到根元类
+Class nsObjectRootMetaClass = object_getClass([NSObject class]);
+// 此时 rootMetaClass == nsObjectRootMetaClass
 ```
 
 **经典 isa 与 superclass 走向图（必须刻在脑子里）：**
