@@ -1,0 +1,33 @@
+project/WebRTC/项目进度存档.md
+  bbae29bead671fa7 18-21,24-27,41-43,45
+  h_3fc7cab4c90312 2
+project/WebRTC/阶段三-M6-JitterBuffer模块.md
+  bbae29bead671fa7 1-713
+project/WebRTC/阶段四-面试讲述.md
+  bbae29bead671fa7 1-409
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "7994469caa040e7d1b90b375124933029519c1ba",
+  "prompts": {
+    "bbae29bead671fa7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c9051bd0-07ad-498e-b095-39a8f7475bf7",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "dumenglin",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 1136,
+      "overriden_lines": 0
+    }
+  },
+  "humans": {
+    "h_3fc7cab4c90312": {
+      "author": "dumenglin"
+    }
+  }
+}
