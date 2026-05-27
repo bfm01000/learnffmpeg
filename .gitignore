@@ -22,6 +22,9 @@
 *.ogg
 *.opus
 *.wma
+# Android 构建产物（勿提交大体积 AAR）
+*.aar
+
 build/
 .cache/
 .vscode
