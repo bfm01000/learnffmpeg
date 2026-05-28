@@ -1,0 +1,125 @@
+Doc/ffmpeg/99-学习进度.md
+  c4b8c02116dcd9ee 1-165
+project/TestBash/check_aar_linkage.sh
+  1fc206995ff12796 353-354,392-393,450-453,455-456
+  371f42c90e50cdae 332,485-487,490-493,495-500
+  bbae29bead671fa7 324-331,333-352,359-363,387-391,396-398,434,438-439,446-449,457-470,473-484,488-489,494,501,503,506,543-544,548
+Doc/ffmpeg/03-SwsContext-图像缩放与格式转换.md
+  c4b8c02116dcd9ee 1-288
+Doc/cpp/智能指针.md
+  79bf5c71af6b1a94 266-602
+Doc/ffmpeg/04-音频PCM-采样-重采样.md
+  c4b8c02116dcd9ee 1-794
+Doc/ffmpeg/07-硬件编解码.md
+  c4b8c02116dcd9ee 1-295
+Doc/ffmpeg/README.md
+  c4b8c02116dcd9ee 1-132
+Doc/system/内存对齐面试速记与原理详解.md
+  79bf5c71af6b1a94 1-765
+Doc/ffmpeg/06-编码参数与码控.md
+  c4b8c02116dcd9ee 1-312
+Doc/ffmpeg/00-FFmpeg全景导读.md
+  c4b8c02116dcd9ee 1-461
+Doc/ffmpeg/01-数据结构与生命周期.md
+  c4b8c02116dcd9ee 1-221,251,305-319,321-336,338-410,458-519
+  79bf5c71af6b1a94 250,252-304,320,337,411-457,520
+  bcc318d79006bfc0 222-249
+Doc/ffmpeg/08-网络协议与流媒体.md
+  c4b8c02116dcd9ee 1-355
+Doc/ffmpeg/05-H264-MP4-NALU.md
+  c4b8c02116dcd9ee 1-395
+Doc/ffmpeg/09-面试题集与自检.md
+  c4b8c02116dcd9ee 1-1011
+Doc/ffmpeg/02-像素格式与内存布局.md
+  c4b8c02116dcd9ee 1-257
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "35e8401dd5d0115bb84a242514f31cc32d88cb14",
+  "prompts": {
+    "1fc206995ff12796": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "9de375d4-5d34-4171-b364-c613b6eec2bf",
+        "model": "gpt-5.5"
+      },
+      "human_author": null,
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 200,
+      "overriden_lines": 0
+    },
+    "371f42c90e50cdae": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "4337b686-9ef2-478d-87ff-b9e0ca4cb9e8",
+        "model": "gpt-5.5"
+      },
+      "human_author": null,
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 134,
+      "overriden_lines": 0
+    },
+    "79bf5c71af6b1a94": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "f62e1953-f1cc-49c9-bfac-0008a8d1e7a0",
+        "model": "gpt-5.5"
+      },
+      "human_author": "dumenglin",
+      "messages": [],
+      "total_additions": 441,
+      "total_deletions": 3,
+      "accepted_lines": 1206,
+      "overriden_lines": 0
+    },
+    "bbae29bead671fa7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c9051bd0-07ad-498e-b095-39a8f7475bf7",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "dumenglin",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 12644,
+      "overriden_lines": 1
+    },
+    "bcc318d79006bfc0": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "da16b25d-c86f-41e1-8547-0e9d6911cab0",
+        "model": "gpt-5.5"
+      },
+      "human_author": "dumenglin",
+      "messages": [],
+      "total_additions": 28,
+      "total_deletions": 0,
+      "accepted_lines": 28,
+      "overriden_lines": 0
+    },
+    "c4b8c02116dcd9ee": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "deb086cd-b0c9-4fa4-a36d-36aba92e38d2",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "dumenglin",
+      "messages": [],
+      "total_additions": 7943,
+      "total_deletions": 0,
+      "accepted_lines": 7937,
+      "overriden_lines": 3
+    }
+  },
+  "humans": {
+    "h_3fc7cab4c90312": {
+      "author": "dumenglin"
+    }
+  }
+}
