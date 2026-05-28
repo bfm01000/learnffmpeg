@@ -1,0 +1,44 @@
+project/WebRTC/07-M6-JitterBuffer模块/code/README.md
+  bbae29bead671fa7 4,30
+project/WebRTC/06-M4-RTP传输模块/code/README.md
+  bbae29bead671fa7 4,42
+project/WebRTC/06-M4-RTP传输模块.md
+  bbae29bead671fa7 765-775,777
+project/WebRTC/04-项目设计方案.md
+  bbae29bead671fa7 4
+project/WebRTC/03-音视频基础self-check.md
+  bbae29bead671fa7 502,616
+project/WebRTC/99-项目进度存档.md
+  bbae29bead671fa7 2,12,25,35-43,92,95,113-119,125
+project/WebRTC/01-入门导读.md
+  bbae29bead671fa7 5,596,652,759-760,780-781
+project/WebRTC/99-学习提示词.md
+  bbae29bead671fa7 160
+project/WebRTC/07-M6-JitterBuffer模块.md
+  bbae29bead671fa7 6,631,636,657,713
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "d4188e0c6e687e603b97b27d7fc68489a62e6bcf",
+  "prompts": {
+    "bbae29bead671fa7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c9051bd0-07ad-498e-b095-39a8f7475bf7",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "dumenglin",
+      "messages": [],
+      "total_additions": 12502,
+      "total_deletions": 1030,
+      "accepted_lines": 12502,
+      "overriden_lines": 0
+    }
+  },
+  "humans": {
+    "h_3fc7cab4c90312": {
+      "author": "dumenglin"
+    }
+  }
+}
