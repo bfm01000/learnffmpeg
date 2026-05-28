@@ -1,0 +1,28 @@
+.gitignore
+  bbae29bead671fa7 37-60
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "9553b293257860dfaa7883ac906e48b3a3f21945",
+  "prompts": {
+    "bbae29bead671fa7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c9051bd0-07ad-498e-b095-39a8f7475bf7",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "dumenglin",
+      "messages": [],
+      "total_additions": 24,
+      "total_deletions": 1,
+      "accepted_lines": 12551,
+      "overriden_lines": 0
+    }
+  },
+  "humans": {
+    "h_3fc7cab4c90312": {
+      "author": "dumenglin"
+    }
+  }
+}
