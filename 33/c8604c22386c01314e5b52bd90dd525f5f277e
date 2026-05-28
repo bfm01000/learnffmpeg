@@ -1,0 +1,51 @@
+project/WebRTC/08-SDP真实样本解析.md
+  bbae29bead671fa7 1-491
+project/WebRTC/00-README.md
+  bbae29bead671fa7 1-104
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "33c8604c22386c01314e5b52bd90dd525f5f277e",
+  "prompts": {
+    "286536eb58f2ce81": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "1610a8a4-f327-4de0-90e0-f81adcd90a3a",
+        "model": "gpt-5.5"
+      },
+      "human_author": "dumenglin",
+      "messages": [],
+      "total_additions": 307,
+      "total_deletions": 82,
+      "accepted_lines": 283,
+      "overriden_lines": 0
+    },
+    "79bf5c71af6b1a94": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "f62e1953-f1cc-49c9-bfac-0008a8d1e7a0",
+        "model": "gpt-5.5"
+      },
+      "human_author": "dumenglin",
+      "messages": [],
+      "total_additions": 543,
+      "total_deletions": 0,
+      "accepted_lines": 543,
+      "overriden_lines": 0
+    },
+    "bbae29bead671fa7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c9051bd0-07ad-498e-b095-39a8f7475bf7",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "dumenglin",
+      "messages": [],
+      "total_additions": 13552,
+      "total_deletions": 30,
+      "accepted_lines": 7215,
+      "overriden_lines": 24
+    }
+  }
+}
