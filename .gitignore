@@ -35,3 +35,26 @@ build/
 # 简历中间产物（仅保留 self-v2.pdf 作为最终版）
 av_interview/项目/待完成/self.pdf
 av_interview/项目/待完成/self-sv.pdf
+
+# macOS 系统文件
+.DS_Store
+
+# 编辑器/IDE 临时文件
+*.bak
+*.swp
+*.swo
+*~
+
+# JetBrains (CLion / IntelliJ / WebStorm)
+.idea/
+*.iml
+
+# Xcode 用户配置
+xcuserdata/
+*.xcuserstate
+
+# Windows 缩略图（跨平台协作保险）
+Thumbs.db
+
+# Clone 的外部学习资料（不跟踪进本仓库）
+project/googleRTC/
