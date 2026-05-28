@@ -762,19 +762,19 @@ public:
 > ⏳ **此节内容在你的 macOS 环境就绪后补充**。
 >
 > **将产出**（约 500 行代码 + 200 行单元测试）：
-> - `阶段三-M4-RTP传输模块/code/CMakeLists.txt`
-> - `阶段三-M4-RTP传输模块/code/include/rtp_packet.h`
-> - `阶段三-M4-RTP传输模块/code/include/rtp_packetizer.h`
-> - `阶段三-M4-RTP传输模块/code/include/rtp_depacketizer.h`
-> - `阶段三-M4-RTP传输模块/code/src/rtp_packet.cc`
-> - `阶段三-M4-RTP传输模块/code/src/h264_packetizer.cc`
-> - `阶段三-M4-RTP传输模块/code/src/h264_depacketizer.cc`
-> - `阶段三-M4-RTP传输模块/code/tests/CMakeLists.txt`
-> - `阶段三-M4-RTP传输模块/code/tests/rtp_packet_test.cc`（10 个测试点：字段读写、字节序、Parse 正负样本）
-> - `阶段三-M4-RTP传输模块/code/tests/h264_packetizer_test.cc`（8 个测试点：Single / STAP-A / FU-A 三种模式 + 边界 case）
-> - `阶段三-M4-RTP传输模块/code/tests/h264_depacketizer_test.cc`（6 个测试点：完整解包 + 丢中间分片 + 重组失败）
+> - `06-M4-RTP传输模块/code/CMakeLists.txt`
+> - `06-M4-RTP传输模块/code/include/rtp_packet.h`
+> - `06-M4-RTP传输模块/code/include/rtp_packetizer.h`
+> - `06-M4-RTP传输模块/code/include/rtp_depacketizer.h`
+> - `06-M4-RTP传输模块/code/src/rtp_packet.cc`
+> - `06-M4-RTP传输模块/code/src/h264_packetizer.cc`
+> - `06-M4-RTP传输模块/code/src/h264_depacketizer.cc`
+> - `06-M4-RTP传输模块/code/tests/CMakeLists.txt`
+> - `06-M4-RTP传输模块/code/tests/rtp_packet_test.cc`（10 个测试点：字段读写、字节序、Parse 正负样本）
+> - `06-M4-RTP传输模块/code/tests/h264_packetizer_test.cc`（8 个测试点：Single / STAP-A / FU-A 三种模式 + 边界 case）
+> - `06-M4-RTP传输模块/code/tests/h264_depacketizer_test.cc`（6 个测试点：完整解包 + 丢中间分片 + 重组失败）
 >
-> **触发条件**：你完成 `环境准备清单-macOS.md` 第 8 节自检的"基础工具"和"B 层 CMake 项目"两块后，告诉我"环境就绪"，我会立即补完这部分。
+> **触发条件**：你完成 `05-环境准备清单-macOS.md` 第 8 节自检的"基础工具"和"B 层 CMake 项目"两块后，告诉我"环境就绪"，我会立即补完这部分。
 
 ---
 

@@ -1,7 +1,7 @@
 # M4 · RTP 传输模块 · B 层代码
 
 > 阶段三 M4 RTP 模块的 B 层重写实现。**不依赖 libwebrtc**，纯 C++17 + GoogleTest，跨平台。
-> 配套主文档：`../阶段三-M4-RTP传输模块.md`。
+> 配套主文档：`../06-M4-RTP传输模块.md`。
 
 ## 目录结构
 
@@ -39,7 +39,7 @@ code/
 
 ```bash
 # 进入代码目录
-cd 阶段三-M4-RTP传输模块/code
+cd 06-M4-RTP传输模块/code
 
 # 配置 + 构建
 mkdir -p build && cd build

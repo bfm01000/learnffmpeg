@@ -3,7 +3,7 @@
 > 自顶向下下钻视频抖动缓冲——这是接收侧最复杂的模块，**面试 TOP 3 高频题**。
 > 模块归属：**B 层（自己重写）**——对位 libwebrtc 的 `modules/video_coding/packet_buffer.cc` + `frame_buffer.cc` + `jitter_estimator.cc`。
 > 本文档覆盖：原理 → 类图与协作 → 设计取舍 → libwebrtc 源码笔记（12 个关键函数）→ 接口骨架 → 面试问答。
-> B 层完整代码与文档并行交付，放在 `阶段三-M6-JitterBuffer模块/code/`，可独立编译。
+> B 层完整代码与文档并行交付，放在 `07-M6-JitterBuffer模块/code/`，可独立编译。
 >
 > **建议投入**：阅读 6-8 小时（含对照 libwebrtc 源码），实操编码 7-10 天。
 
@@ -628,12 +628,12 @@ private:
 
 ## 7. B 层完整代码（独立 CMake 项目）
 
-完整代码已生成到 `阶段三-M6-JitterBuffer模块/code/`，**纯 C++17、不依赖 libwebrtc**，结构和 M4 一致。
+完整代码已生成到 `07-M6-JitterBuffer模块/code/`，**纯 C++17、不依赖 libwebrtc**，结构和 M4 一致。
 
 ### 目录结构
 
 ```
-阶段三-M6-JitterBuffer模块/code/
+07-M6-JitterBuffer模块/code/
 ├── CMakeLists.txt
 ├── README.md
 ├── include/
@@ -654,7 +654,7 @@ private:
 ### 编译与运行
 
 ```bash
-cd 阶段三-M6-JitterBuffer模块/code
+cd 07-M6-JitterBuffer模块/code
 mkdir -p build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Debug
 cmake --build . -j && ctest --output-on-failure
@@ -710,4 +710,4 @@ cmake --build . -j && ctest --output-on-failure
 - ✅ 7 道面试问答映射
 - ✅ B 层完整代码（独立 CMake 项目，见 `code/` 子目录）
 
-**下一步**：去 `阶段三-M6-JitterBuffer模块/code/` 编译跑测试。命令同 M4。
+**下一步**：去 `07-M6-JitterBuffer模块/code/` 编译跑测试。命令同 M4。

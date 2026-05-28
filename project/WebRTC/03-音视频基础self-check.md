@@ -499,7 +499,7 @@ avcodec_open2(ctx, codec, NULL) → 真正初始化解码器
 **标准答案**：**SDP（Session Description Protocol）** 是文本格式的会话描述协议，描述"我能发什么、我能收什么"（编码器列表、传输地址、加密参数、ICE candidate）。**Offer/Answer 流程**：① A 调 `createOffer` 生成 SDP（含 A 支持的所有编码 + ICE candidate + DTLS 指纹），通过**业务信令通道**（WebSocket/HTTPS）发给 B；② B 调 `setRemoteDescription(offer)` 解析 A 的能力，然后 `createAnswer` 生成自己的 SDP（在 A 的能力子集里选定最终参数），发回 A；③ A 调 `setRemoteDescription(answer)` 完成协商；④ 同时双方进行 **ICE candidate 收集和连通性检查**，建立 UDP 通道；⑤ DTLS 握手协商 SRTP 密钥；⑥ 媒体开始流动。**面试常追问**：为什么要 Offer/Answer 不是单向声明？因为双方能力可能不对称，需要协商交集；为什么 SDP 走业务信令不走 WebRTC 自己？因为还没建连。
 
 **自检**：你能口述清楚吗？[ ] Y / [ ] N
-**已有文档**：`阶段一-WebRTC架构总览.md`（部分）
+**已有文档**：`02-架构总览.md`（部分）
 
 ---
 
@@ -613,7 +613,7 @@ avcodec_open2(ctx, codec, NULL) → 真正初始化解码器
   [~] WebRTC 选 UDP 的原因      → 网络协议通关指南.md（部分）
   [ ] HLS 低延迟优化            空白
   [ ] RTP Header 字段           ★ 空白，WebRTC 阶段三必补
-  [~] SDP / Offer-Answer        → 阶段一-WebRTC架构总览.md
+  [~] SDP / Offer-Answer        → 02-架构总览.md
 
 七、音频处理基础 (Q36-Q40)
   [ ] 3A (AEC/AGC/ANS)          ★ 空白，WebRTC 阶段三必补

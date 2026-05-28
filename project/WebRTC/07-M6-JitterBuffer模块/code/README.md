@@ -1,7 +1,7 @@
 # M6 · 视频 Jitter Buffer · B 层代码
 
 > 阶段三 M6 Jitter Buffer 模块的 B 层重写实现。**不依赖 libwebrtc**，纯 C++17 + GoogleTest。
-> 配套主文档：`../阶段三-M6-JitterBuffer模块.md`。
+> 配套主文档：`../07-M6-JitterBuffer模块.md`。
 
 ## 目录结构
 
@@ -27,7 +27,7 @@ code/
 ## 编译与运行
 
 ```bash
-cd 阶段三-M6-JitterBuffer模块/code
+cd 07-M6-JitterBuffer模块/code
 mkdir -p build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Debug
 cmake --build . -j && ctest --output-on-failure
