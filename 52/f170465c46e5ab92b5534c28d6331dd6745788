@@ -1,0 +1,31 @@
+Doc/ffmpeg/09-面试题集与自检.md
+  909d30c8fb562403 694
+Doc/ffmpeg/99-学习进度.md
+  909d30c8fb562403 37-39
+Doc/ffmpeg/10-移动端硬件编解码.md
+  909d30c8fb562403 266,270,272,285-319,321,323-328,330,332-334,338-340,343,346-381,383-384,386-387,389-390,392-393,395-396,398-399,401,404-408
+Doc/ffmpeg/07-硬件编解码.md
+  909d30c8fb562403 82-98,235-299,399-400,414-417
+Doc/ffmpeg/README.md
+  909d30c8fb562403 99-103
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "52f170465c46e5ab92b5534c28d6331dd6745788",
+  "prompts": {
+    "909d30c8fb562403": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a3f06d3f-fa71-467e-a4c2-9752dd5c1f1b",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "dumenglin",
+      "messages": [],
+      "total_additions": 8532,
+      "total_deletions": 43,
+      "accepted_lines": 6177,
+      "overriden_lines": 40
+    }
+  }
+}
