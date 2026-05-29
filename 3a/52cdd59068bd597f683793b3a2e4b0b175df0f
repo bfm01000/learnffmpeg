@@ -1,0 +1,27 @@
+Doc/ffmpeg/README.md
+  909d30c8fb562403 97-100
+Doc/ffmpeg/10-移动端硬件编解码.md
+  909d30c8fb562403 260-341,372
+Doc/ffmpeg/99-学习进度.md
+  909d30c8fb562403 37-38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "3a52cdd59068bd597f683793b3a2e4b0b175df0f",
+  "prompts": {
+    "909d30c8fb562403": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a3f06d3f-fa71-467e-a4c2-9752dd5c1f1b",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "dumenglin",
+      "messages": [],
+      "total_additions": 6791,
+      "total_deletions": 1,
+      "accepted_lines": 6014,
+      "overriden_lines": 1
+    }
+  }
+}
