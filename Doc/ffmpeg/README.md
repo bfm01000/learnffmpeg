@@ -96,7 +96,11 @@
 
 ### "移动端零拷贝怎么做？iOS 和 Android 有什么区别？"
 
-→ [10-移动端硬件编解码.md](./10-移动端硬件编解码.md) 第四点五节：采集→编码 / 解码→渲染两条不下 CPU 的链路、Android Surface vs iOS CVPixelBuffer/IOSurface 对照、哪些操作会偷偷打断零拷贝（高频面试题）。
+→ [10-移动端硬件编解码.md](./10-移动端硬件编解码.md) 第四点五节：底层原理（UMA 下拷贝为何仍慢）、采集→编码 / 解码→渲染两条不下 CPU 的链路、Android dma-buf/Surface vs iOS IOSurface/CVPixelBuffer、踩坑表 + 面试问答（高频）。
+
+### "桌面端（Linux/Windows/macOS）硬件编解码和零拷贝怎么做？"
+
+→ [07-硬件编解码.md](./07-硬件编解码.md) §2.5（三大 OS 的 API 地图：VAAPI / D3D11VA / VideoToolbox）+ §五点五（桌面零拷贝与渲染互操作：CUDA-GL / VAAPI-dmabuf / D3D11 / Metal，独显的 PCIe 回读为何更贵）。
 
 ### "直播延迟为什么这么高？怎么降？"
 
