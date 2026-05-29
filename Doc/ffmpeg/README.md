@@ -34,8 +34,13 @@
 07 硬件编解码         <- 进阶,有 GPU 才学
    |
    v
+10 移动端硬件编解码    <- 07 的移动端续篇 (Android/iOS),做手机/WebRTC 才学
+   |
+   v
 08 网络协议与流媒体    <- 直播 / RTC 的基础
 ```
+
+> 09 是面试题集与自检（贯穿全部主题），10 是 07 的移动端续篇——两者不在主线顺序里，按需读。
 
 学习方法上：按导读第 12 节"当前阶段定位"的标尺给自己定位。先把已经懂的章节快速过一遍把零散点串成地图，再针对 ⚠️/❌ 的部分集中突破。
 
@@ -54,6 +59,7 @@
 | [06-编码参数与码控.md](./06-编码参数与码控.md) | H.264 Profile / Preset / Tune / CRF / CBR / VBR / 低延迟参数组合 | 3.1 |
 | [07-硬件编解码.md](./07-硬件编解码.md) | NVENC / VideoToolbox / QSV / 硬件帧 vs 软件帧 / av_hwframe_transfer_data / 硬件滤镜 | 3.6 |
 | [08-网络协议与流媒体.md](./08-网络协议与流媒体.md) | TCP vs UDP / 队头阻塞 / HTTPS / QUIC / RTMP / HLS / HTTP-FLV / WebRTC / 协议伪装 | 3.7 |
+| [10-移动端硬件编解码.md](./10-移动端硬件编解码.md) | Android MediaCodec（缓冲区队列 / CSD / 颜色格式坑 / Surface 零拷贝）/ iOS VideoToolbox（实时编码 / CVPixelBuffer / AVCC↔Annex-B）/ FFmpeg 两端支持边界 / WebRTC 衔接 | 3.6 |
 
 ---
 
@@ -78,6 +84,14 @@
 ### "数据从 GPU 解码出来送 sws_scale 崩溃 / 极慢？"
 
 → [07-硬件编解码.md](./07-硬件编解码.md)，第 5 节"sws_scale 为什么不能处理硬件帧"。
+
+### "手机上怎么硬编硬解？Android 解码花屏 / iOS 推流只有声音没画面？"
+
+→ [10-移动端硬件编解码.md](./10-移动端硬件编解码.md)：Android 花屏看第 3.4 节（stride / 颜色格式），iOS 推流无画面看第 4.3 节（AVCC→Annex-B + 补 SPS/PPS）。
+
+### "FFmpeg 在 Android 上能硬件编码吗？"
+
+→ [10-移动端硬件编解码.md](./10-移动端硬件编解码.md) 第五章：不能，没有 MediaCodec 编码 wrapper，得直接调系统 API。
 
 ### "直播延迟为什么这么高？怎么降？"
 
