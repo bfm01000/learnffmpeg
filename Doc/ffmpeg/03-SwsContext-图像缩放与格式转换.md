@@ -46,8 +46,9 @@ AVFrame* dst = av_frame_alloc();
 dst->format = AV_PIX_FMT_RGB24;
 dst->width  = src->width;
 dst->height = src->height;
-av_frame_get_buffer(dst, 32);   // 32 字节对齐
-av_frame_make_writable(dst);
+if (av_frame_get_buffer(dst, 32) < 0) { /* 分配失败,清理返回 */ }
+// 注意:刚 get_buffer 出来的帧 refcount==1、本来就可写,
+// 这里不需要 av_frame_make_writable(dst)——那是给"可能被共享的帧"用的(见 01 §5.7)
 
 // 创建转换上下文
 SwsContext* swsCtx = sws_getContext(
@@ -56,6 +57,7 @@ SwsContext* swsCtx = sws_getContext(
     SWS_BICUBIC,
     nullptr, nullptr, nullptr
 );
+if (!swsCtx) { /* 创建失败,清理返回 */ }
 
 // 执行转换
 sws_scale(
@@ -70,7 +72,7 @@ sws_freeContext(swsCtx);
 av_frame_free(&dst);
 ```
 
-`av_frame_alloc` / `av_frame_get_buffer` / `av_frame_make_writable` 三件套的含义见 [01-数据结构与生命周期.md](./01-数据结构与生命周期.md)。
+`av_frame_alloc` / `av_frame_get_buffer` / `av_frame_make_writable` 三件套的含义见 [01-数据结构与生命周期.md](./01-数据结构与生命周期.md) §5.7。**注意上面没有调 `make_writable`**：它只在帧可能被多方共享时才需要，刚分配的目标帧不需要——这是一个常见的多余调用。
 
 ---
 
@@ -252,6 +254,27 @@ sws_freeContext(swsCtx);
 ```
 
 如果输入流的分辨率中途变化（直播切片、动态码率），需要重建 `SwsContext`。这也是 `sws_getCachedContext` 这个工具函数的用武之地——它会比对参数是否变化，没变就复用，变了就重新分配。
+
+---
+
+## 七点五、色彩空间与 Range：YUV→RGB 发灰/偏色的根源
+
+[02-像素格式与内存布局.md](./02-像素格式与内存布局.md) 第 5 节讲过 BT.601 vs BT.709、Full vs Limited Range 错配会导致**画面发灰或偏色**。在 swscale 这一层，根源是：
+
+**`sws_scale` 做 YUV↔RGB 转换时，默认按 BT.601 + Limited Range 处理**。如果你的源其实是 BT.709（1080p/4K 几乎都是）或 Full Range，转出来的 RGB 就会色彩不准（典型是发灰、肤色偏移）。
+
+正确做法：`sws_getContext` 之后用 `sws_setColorspaceDetails` 告诉它源/目标的色彩空间和 range：
+
+```cpp
+const int *invTable  = sws_getCoefficients(SWS_CS_ITU709);   // 源是 BT.709
+const int *table     = sws_getCoefficients(SWS_CS_ITU709);   // 目标
+int srcRange = 1;   // 1 = Full Range(JPEG), 0 = Limited Range(MPEG)
+int dstRange = 1;
+sws_setColorspaceDetails(swsCtx, invTable, srcRange, table, dstRange,
+                         0, 1 << 16, 1 << 16);   // brightness/contrast/saturation 默认
+```
+
+源的真实色彩空间和 range 从哪来：解码帧的 `frame->colorspace`（`AVColorSpace`，如 `AVCOL_SPC_BT709`）和 `frame->color_range`（`AVColorRange`，`AVCOL_RANGE_JPEG`=Full / `AVCOL_RANGE_MPEG`=Limited）。**别写死 BT.601**——按帧的实际字段设，才是发灰/偏色 bug 的根治。
 
 ---
 

@@ -305,8 +305,16 @@ int ret = swr_alloc_set_opts2(
     0, nullptr
 );
 
-if (ret < 0 || !swr) { /* error */ }
-if (swr_init(swr) < 0) { /* error */ }
+// 每一步都要判错并清理已分配的资源,别用空的 /* error */ 占位
+if (ret < 0 || !swr) {
+    av_channel_layout_uninit(&outChLayout);
+    return false;
+}
+if (swr_init(swr) < 0) {
+    swr_free(&swr);
+    av_channel_layout_uninit(&outChLayout);
+    return false;
+}
 
 // 计算输出 buffer 大小(关键)
 int64_t delay = swr_get_delay(swr, srcFrame->sample_rate);
@@ -319,10 +327,13 @@ int outSampleCount = av_rescale_rnd(
 
 uint8_t** outData = nullptr;
 int outLinesize = 0;
-av_samples_alloc_array_and_samples(
-    &outData, &outLinesize,
-    2, outSampleCount, AV_SAMPLE_FMT_S16, 0
-);
+if (av_samples_alloc_array_and_samples(
+        &outData, &outLinesize,
+        2, outSampleCount, AV_SAMPLE_FMT_S16, 0) < 0) {
+    swr_free(&swr);
+    av_channel_layout_uninit(&outChLayout);
+    return false;
+}
 
 int converted = swr_convert(
     swr,
@@ -330,9 +341,10 @@ int converted = swr_convert(
     const_cast<const uint8_t**>(srcFrame->extended_data),
     srcFrame->nb_samples
 );
-// converted = 每个声道实际输出的样本数
+// converted < 0 是错误; >= 0 时是每个声道实际输出的样本数
+if (converted < 0) { /* 处理转换错误 */ }
 
-// 退出
+// 退出:无论成功失败,已分配的都要释放
 av_freep(&outData[0]);
 av_freep(&outData);
 av_channel_layout_uninit(&outChLayout);
@@ -636,6 +648,93 @@ Google 的 WebRTC 在音频模块上深耕了十几年，内置成熟的 AEC / N
 丢包时根据前后音频估算一段"假数据"填上，避免直接静音或爆音。**它不能真正恢复丢失内容**——只是听感上更自然。
 
 语音场景短时间 PLC 效果不错；音乐场景容易被听出来。
+
+### AAC vs Opus（RTC 视角）
+
+前面整篇都在讲 AAC + ADTS + `AVAudioFifo`,那是**点播 / 直播存档**的世界。但只要你转头做实时互动(WebRTC、语音通话),会发现默认编码器根本不是 AAC,而是 **Opus**。原因不是"Opus 音质更好",而是它从设计目标上就是为实时网络生的。
+
+#### 为什么 RTC 选 Opus 而不是 AAC
+
+三个互相独立的理由:
+
+- **低延迟**。AAC-LC 一帧固定 1024 样本(48k 下约 21.33ms,见第九节),这个时间粒度对点播无所谓,对通话却是硬延迟。Opus 帧长可以低到 2.5ms,编码器算法延迟也远小于 AAC。
+- **抗丢包**。Opus 把丢包隐藏(PLC)和前向纠错(FEC)做进了编码器内部,而 AAC 裸流丢一包就是一段静音或爆音,需要外层自己兜底。
+- **免版税**。Opus 是开放标准(IETF RFC 6716),没有专利授权费;AAC 的专利授权在很多商业场景是真实成本。WebRTC 作为浏览器标准必须用免版税编码器,这一条几乎是决定性的。
+
+#### 可变帧长 vs 固定 1024 样本:延迟从哪来
+
+这是 AAC 和 Opus 最本质的差别。
+
+AAC-LC **每帧锁死 1024 样本**——所以你才需要 `AVAudioFifo` 把采集端的 10ms 小块攒够 1024 再编码(第十二节)。攒包这个动作本身就引入延迟:采集端给你 480 样本,你必须等到凑满 1024 才能编一帧。
+
+Opus 帧长**可选 2.5 / 5 / 10 / 20 / 40 / 60 毫秒**,默认 20ms。这意味着:
+
+- 你想要更低延迟,就用更短帧长(代价是包头开销占比变高、压缩率略降)。
+- 采集端按 20ms 出数据,编码器就吃 20ms,**通常不需要 FIFO 攒包**——帧长直接对齐采集粒度。
+
+一句话直觉:AAC 是"先凑够一帧的料再下锅",Opus 是"采集多少就近编多少"。后者天然适合通话这种"每一毫秒都要省"的场景。
+
+#### 内建 PLC 与 in-band FEC:和 Jitter Buffer 配合
+
+本节前面讲过 Jitter Buffer 和 PLC——那里的 PLC 是个通用概念,而 **Opus 把 PLC 和 FEC 直接做进了编码器**,这是它和 AAC 在抗丢包上的代际差距:
+
+- **PLC(丢包隐藏)**:某个包没到,Opus 解码器根据前后音频估算一段过渡数据填上,避免直接静音或爆音。和前面说的一样,它**不恢复真实内容**,只是听感更自然,语音场景效果好、音乐场景容易露馅。
+- **in-band FEC(前向纠错)**:更进一步,Opus 可以把**前一帧的低码率冗余副本**塞进当前帧。这样丢了第 N 包,只要第 N+1 包到了,解码器就能用里面的冗余信息**部分重建**第 N 包,而不是靠猜。代价是码率上升。
+
+这两者都和 Jitter Buffer 强相关:Jitter Buffer 负责"重排 + 决定等多久",而当它判定某个包确实丢了、不再等待时,就交给 Opus 的 PLC / FEC 来填补缺口。三者是一条流水线,不是三个互斥方案。
+
+#### 封装:Opus 不需要 ADTS
+
+第十二节强调过 AAC 裸流必须套 **ADTS** 头才能被识别(每帧前面挂一个带采样率、声道、帧长的小头部),否则就是一段无法自描述的字节。
+
+Opus 在 WebRTC 里**不需要这种外层封装**——它**直接由 RTP 承载**:一个 RTP 包通常就装一个 Opus 帧,采样率 / 声道 / 帧长等信息通过信令(SDP)在建连时就协商好了,不必逐帧重复携带。
+
+| 场景 | AAC 的外层 | Opus 的外层 |
+|---|---|---|
+| 实时传输 | 需要 ADTS / LATM 等封装 | 直接进 RTP 负载 |
+| 存进文件 | MP4 / TS 容器 | Ogg / WebM 容器 |
+| 自描述性 | 裸流必须靠 ADTS 头 | 靠 SDP 信令协商一次 |
+
+(封装 / 裸流 / Annex-B 这类"裸流为什么需要外层头"的视频侧对照,可参考 [05-H264-MP4-NALU.md](./05-H264-MP4-NALU.md) 的 AVCC vs Annex-B,以及 RTP 承载见 [08-网络协议与流媒体.md](./08-网络协议与流媒体.md) §十。)
+
+#### 频带与采样率:一个编码器通吃语音和音乐
+
+AAC 偏"音乐 / 高码率 / 高采样率"的世界,本质是个面向**存储和高保真回放**的格式。
+
+Opus 的特别之处是**频带自适应**:同一个编码器,根据目标码率和内容,在以下几档之间自动切换——
+
+- 窄带 NarrowBand(8kHz):电话级语音
+- 宽带 WideBand(16kHz):清晰语音
+- 超宽带 SuperWideBand(24kHz)
+- 全频带 FullBand(48kHz):音乐 / 高保真
+
+它内部其实融合了一个语音编码器(SILK)和一个通用音频编码器(CELT),会根据内容在"偏语音"和"偏音乐"之间平滑过渡。所以一路通话里时而说话、时而放音乐,**不用切编码器**,Opus 自己适配。这正是 RTC 需要的:你没法预设用户传的是人声还是背景音乐。
+
+#### 对照表
+
+| 维度 | AAC-LC | Opus |
+|---|---|---|
+| 设计目标 | 存储 / 回放 / 高保真 | 实时互动 / 低延迟 |
+| 帧长 | 固定 1024 样本(48k≈21.33ms) | 可变 2.5/5/10/20/40/60ms(默认 20) |
+| 编码延迟 | 较高(还需 FIFO 攒包) | 低,帧长可对齐采集粒度 |
+| 抗丢包 | 无内建,靠外层兜底 | 内建 PLC + in-band FEC |
+| 实时封装 | 必须 ADTS / LATM | 直接进 RTP,SDP 协商一次 |
+| 采样率 / 频带 | 偏高采样率、音乐 | 8k–48k 自适应(NB/WB/SWB/FB) |
+| 语音 vs 音乐 | 偏音乐 | 语音 + 音乐通吃(SILK+CELT) |
+| 版税 | 有专利授权成本 | 免版税(IETF 开放标准) |
+| 典型出口 | MP4 / TS / 直播 CDN | WebRTC / RTP |
+
+#### 一句话取舍
+
+> **点播、广电、存档、高码率音乐回放 → AAC;实时互动(RTC、语音通话、连麦)→ Opus。**
+
+判据不是"谁音质高",而是"这条链路在不在乎那几十毫秒、在不在乎丢一个包"。在乎,就是 Opus 的主场。你接下来要打的 WebRTC 地基里,音频默认就是 Opus,把这一节的直觉带过去即可(见 [[project_webrtc_learning]])。
+
+#### Opus 小节自检
+
+- 同样传一段会议语音,为什么 Opus 默认 20ms 帧长比 AAC 的 1024 样本帧更适合通话?延迟差在哪一步?
+- Opus 的 in-band FEC 和 PLC 有什么本质区别?哪个能"部分重建"真实内容、哪个只是"猜一段填上"?它们各自在什么时候被 Jitter Buffer 触发?
+- 为什么 AAC 裸流必须套 ADTS,而 Opus 在 WebRTC 里可以不要外层封装?自描述信息分别从哪来?
 
 ---
 

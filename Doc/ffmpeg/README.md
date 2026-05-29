@@ -58,8 +58,9 @@
 | [05-H264-MP4-NALU.md](./05-H264-MP4-NALU.md) | 编码 vs 容器 / NALU / AVCC vs Annex-B / I/P/B / GOP / IDR / SPS-PPS 补齐 / PTS-DTS / AAC ADTS | 3.1 / 3.2 / 6.5 |
 | [06-编码参数与码控.md](./06-编码参数与码控.md) | H.264 Profile / Preset / Tune / CRF / CBR / VBR / 低延迟参数组合 | 3.1 |
 | [07-硬件编解码.md](./07-硬件编解码.md) | NVENC / VideoToolbox / QSV / 硬件帧 vs 软件帧 / av_hwframe_transfer_data / 硬件滤镜 | 3.6 |
-| [08-网络协议与流媒体.md](./08-网络协议与流媒体.md) | TCP vs UDP / 队头阻塞 / HTTPS / QUIC / RTMP / HLS / HTTP-FLV / WebRTC / 协议伪装 | 3.7 |
-| [10-移动端硬件编解码.md](./10-移动端硬件编解码.md) | Android MediaCodec（缓冲区队列 / CSD / 颜色格式坑 / Surface 零拷贝）/ iOS VideoToolbox（实时编码 / CVPixelBuffer / AVCC↔Annex-B）/ FFmpeg 两端支持边界 / WebRTC 衔接 | 3.6 |
+| [08-网络协议与流媒体.md](./08-网络协议与流媒体.md) | TCP vs UDP / 队头阻塞 / HTTPS / QUIC / RTMP / HLS / HTTP-FLV / WebRTC 实时栈（RTP/RTCP/ICE/SDP/SRTP/GCC/SFU）/ 协议伪装 | 3.7 |
+| [09-面试题集与自检.md](./09-面试题集与自检.md) | 9 主题 × 三档 60+ 面试题 + 答题模板 + 系统设计题 + 自评打分表 + 级别判断（贯穿全部主题） | 全部 |
+| [10-移动端硬件编解码.md](./10-移动端硬件编解码.md) | Android MediaCodec（缓冲区队列 / CSD / 颜色格式坑 / Surface 零拷贝）/ iOS VideoToolbox（实时编码 / CVPixelBuffer / AVCC↔Annex-B）/ FFmpeg 两端支持边界 / WebRTC 衔接 | 6.5 / 硬件 |
 
 ---
 

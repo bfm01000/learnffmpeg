@@ -65,17 +65,21 @@ NAL header 的低 5 bit 是 `nal_unit_type`，决定这个 NALU 装的是什么�
 |---|---|---|
 | 1 | non-IDR slice | 普通帧（P 帧或 B 帧的 slice） |
 | 5 | IDR slice | 即时解码刷新帧（特殊的 I 帧，独立可解码） |
-| 6 | SEI | 补充增强信息（HDR 元数据、时间码、私有 metadata） |
+| 6 | SEI | 补充增强信息（HDR 元数据、时间码、私有 metadata；WebRTC 常借它透传自定义数据/时间戳） |
 | 7 | SPS | Sequence Parameter Set（序列参数集，描述整段视频的宽高、profile、level） |
 | 8 | PPS | Picture Parameter Set（图像参数集，描述编码细节） |
+| 9 | AUD | 访问单元分隔符（标记一帧边界，直播流里常见） |
+| 12 | Filler | 填充数据（CBR 凑码率用，无实际内容） |
 
 解码 H.264 的程序逻辑大致：
 
 ```cpp
 int getNaluType(unsigned char byte) {
-    return byte & 0x1F;   // 低 5 bit
+    return byte & 0x1F;   // 低 5 bit —— 仅 H.264
 }
 ```
+
+> **迁移警告**：`byte & 0x1F` **只对 H.264 成立**。H.265 的 NAL header 是 **2 字节**，type 取 `(byte >> 1) & 0x3F`（首字节的中间 6 bit）。把这个函数原样搬到 H.265 解析里是最经典的迁移 bug——type 全错、边界全乱。详见 [§5.4 H.264 → H.265 差异速查](#54-h264--h265hevc差异速查)。
 
 ---
 
@@ -118,6 +122,8 @@ SPS / PPS **不在数据流里**——单独抽出来放在 MP4 的 `avcC` 配�
 | 长度字段占几字节 | 看 `avcC` 配置（一般 4） | 无 |
 | 寻找下一个 NALU | 直接按长度跳过 | 扫描起始码 |
 | 典型容器 / 协议 | MP4 / FLV / MKV | RTMP / TS / RTP / 裸流 |
+
+> 实战落地：iOS/Android 硬编解码器在这两种格式间的转换坑见 [10-移动端硬件编解码.md](./10-移动端硬件编解码.md)（VideoToolbox 出 AVCC、MediaCodec 吃 Annex-B）；RTP 打包吃 Annex-B 风格 NALU 见 [08-网络协议与流媒体.md](./08-网络协议与流媒体.md) 的 WebRTC 实时栈。代码里怎么做这一步转换见下面 [§5.3 bsf](#53-bitstream-filterbsf的-api-形态)。
 
 ---
 
@@ -168,6 +174,103 @@ MP4 是 box 树：
 ```
 
 **关键点：`mdat` 不能脱离 `moov` 独立解释**——sample 的偏移、大小、时序、关键帧索引全在 `moov` 的表里。直接读 `mdat` 你不知道每个 sample 多长、什么时候播。
+
+### 5.3 Bitstream Filter（bsf）的 API 形态
+
+前面 §5.1 用了 `-bsf:v h264_mp4toannexb` 这条命令。bsf 到底是什么、代码里怎么调？这里补齐。
+
+**bsf 是对"已编码比特流"做轻量变换的过滤器——它不解码、也不重新编码**，只在比特流层面做格式/打包的翻译或裁剪。最常见的就是：
+
+- `h264_mp4toannexb`：把 H.264 从 AVCC（长度前缀）转成 Annex-B（起始码），并从 `avcC` 注入 SPS/PPS。
+- `hevc_mp4toannexb`：H.265 的对应物，做同样的事（注意它还要处理 VPS，见 §5.4）。
+
+**反方向（Annex-B → AVCC）通常不需要手动 bsf**：当你把 Annex-B 码流喂给 MP4 muxer 时，muxer 会自动把起始码 NALU 重新打成长度前缀，并把参数集收进 `avcC`。这是封装器的内建职责，写代码时不用自己挂一个反向 bsf。
+
+#### API 三件套的标准骨架
+
+C++ 里 bsf 的生命周期是「分配 → 配置 extradata → 初始化 → 反复送/收 → 释放」。送进去一个 packet，可能收回 0 个、1 个或多个 packet（所以 receive 要用循环）：
+
+```cpp
+const AVBitStreamFilter *filterDefinition = av_bsf_get_by_name("h264_mp4toannexb");
+if (!filterDefinition) { /* 该 bsf 不存在，报错返回 */ }
+
+AVBSFContext *bsfContext = nullptr;
+if (av_bsf_alloc(filterDefinition, &bsfContext) < 0) { /* 分配失败 */ }
+
+// 关键：把输入流的编解码参数(含 avcC extradata)拷给 bsf，
+// 否则 mp4toannexb 拿不到 SPS/PPS。inputCodecParameters 来自 AVStream->codecpar
+avcodec_parameters_copy(bsfContext->par_in, inputCodecParameters);
+
+if (av_bsf_init(bsfContext) < 0) { /* 初始化失败，记得 free */ }
+
+// ——主循环里，对每个 demux 出来的 packet——
+if (av_bsf_send_packet(bsfContext, inputPacket) < 0) { /* 送入失败 */ }
+
+while (true) {
+    AVPacket *outputPacket = av_packet_alloc();
+    int receiveStatus = av_bsf_receive_packet(bsfContext, outputPacket);
+    if (receiveStatus == AVERROR(EAGAIN) || receiveStatus == AVERROR_EOF) {
+        av_packet_free(&outputPacket);
+        break;                       // 当前没有更多输出，回去送下一个 inputPacket
+    }
+    if (receiveStatus < 0) { /* 真正的错误，清理退出 */ }
+
+    // outputPacket 现在是 Annex-B，可写裸流文件 / 进 RTP 打包
+    av_packet_unref(outputPacket);
+    av_packet_free(&outputPacket);
+}
+
+// 收尾：送一个 NULL packet 冲刷，最后释放
+av_bsf_free(&bsfContext);          // 内部会一并释放 par_in/par_out
+```
+
+要点：
+
+- `EAGAIN` 不是错误，只是「这次没攒够输出，继续送」——和解码器的 send/receive 模型完全一致（见 [01-数据结构与生命周期.md](./01-数据结构与生命周期.md) §6.4）。
+- 流结束时 `av_bsf_send_packet(bsfContext, nullptr)` 送一个空包冲刷（flush），再把残留 receive 干净。
+- `par_in` 的 extradata 一定要正确赋值，这是 `mp4toannexb` 能取出 SPS/PPS 的唯一来源。
+
+#### 常用 bsf 速查
+
+| bsf 名称 | 用途一句话 |
+|---|---|
+| `h264_mp4toannexb` | H.264：AVCC → Annex-B，并注入 SPS/PPS |
+| `hevc_mp4toannexb` | H.265：AVCC → Annex-B，并注入 VPS/SPS/PPS |
+| `extract_extradata` | 把内联在码流里的参数集抽出来放到 packet 的 side data |
+| `dump_extra` | 反过来，把 extradata 注入到（每个或关键）packet 里 |
+| `h264_metadata` / `hevc_metadata` | 不重编码改 SPS/PPS 里的元数据（如 SAR、color 信息） |
+| `aac_adtstoasc` | 音频对照物：AAC 从 ADTS（直播）转成 ASC（MP4 用），见 §九 |
+
+**这条路是推流 / WebRTC 的必经路**：从 MP4 demux 出来的 H.264 是 AVCC，而 RTP 打包吃的是 Annex-B 风格的 NALU。中间这一步格式翻译，工程上就是挂一个 `h264_mp4toannexb` bsf 完成的。移动端硬件编解码器侧的同款转换见 [10-移动端硬件编解码.md](./10-移动端硬件编解码.md)。
+
+### 5.4 H.264 → H.265（HEVC）差异速查
+
+打 WebRTC / 推流地基时，迟早会从 H.264 迁到 H.265。两者「比特流如何组织」的思路一脉相承（都有 NALU、参数集、AVCC/Annex-B 两种打包），但若干关键位置不一样，照搬代码会踩坑。
+
+| 维度 | H.264（AVC） | H.265（HEVC） |
+|---|---|---|
+| 基本编码块 | 宏块（Macroblock）固定 16×16 | CTU（Coding Tree Unit）最大 64×64，可递归四叉树细分 |
+| NAL header 长度 | 1 字节 | 2 字节 |
+| 取 NALU type 的位运算 | `type = byte & 0x1F`（低 5 bit） | `type = (byte >> 1) & 0x3F`（首字节的中间 6 bit） |
+| 参数集 | SPS、PPS | **VPS、SPS、PPS（多了 VPS）** |
+| 起始码补齐工具（bsf） | `h264_mp4toannexb` | `hevc_mp4toannexb` |
+| 压缩率 | 基准 | 同画质约省 50% 码率 |
+| 计算复杂度 | 较低 | 显著更高（编码端尤甚，CTU 划分+更多预测模式） |
+| 授权 / 专利 | 相对清晰 | 专利池复杂（多家、分散），商用授权是真实成本 |
+
+#### VPS 是 H.265 多出来的第三层参数集
+
+H.264 只有两层参数集（SPS 描述序列、PPS 描述图像）。**H.265 在它们之上多了 VPS（Video Parameter Set）**，用来描述整个视频的层级信息（多层/可分级编码、多个 SPS 共享的顶层参数）。
+
+这对「参数集补齐」逻辑很关键：§六讲的「每个 IDR 前注入 SPS/PPS」策略，到了 H.265 必须扩展成**注入 VPS + SPS + PPS 三件**。漏掉 VPS，部分解码器会直接解不出来。`hevc_mp4toannexb` 已经帮你处理了这件事，但如果你手写参数集注入逻辑，VPS 是最容易被忘掉的那一个。
+
+#### 迁移提醒
+
+- **解析 NALU type 的位运算不一样**：H.264 是 `byte & 0x1F`，H.265 是 `(byte >> 1) & 0x3F`。把 §三那个 `getNaluType` 直接复制到 H.265 解析里，是最经典的迁移 bug——type 全错、切边界全乱。
+- 参数集 type 编号也变了（H.265 里 VPS=32、SPS=33、PPS=34），不能套用 H.264 的 7/8。
+- 码控、profile/level 参数的差异见 [06-编码参数与码控.md](./06-编码参数与码控.md)；硬件编解码器对 H.265 的支持情况见 [10-移动端硬件编解码.md](./10-移动端硬件编解码.md)。
+
+> 这两节的自检：bsf 和"解码器"最本质的区别是什么？`av_bsf_receive_packet` 返回 `EAGAIN` 该怎么办？把 Annex-B 的 H.264 写进 MP4 需要手动挂反向 bsf 吗？同一个 `getNaluType(byte){return byte&0x1F;}` 用在 H.265 上会怎样？H.265 比 H.264 多出来的那层参数集叫什么、为什么补齐逻辑必须带上它？
 
 ---
 
@@ -234,7 +337,7 @@ H.264 / H.265 把 B 帧细分两种：
 | **普通 B 帧**（Non-reference） | 不被任何帧参考 | **可以随意丢**，顶多画面不流畅 |
 | **参考 B 帧**（Reference B / 分层 B） | **被其他 B 帧参考** | **绝对不能丢**，丢了依赖它的子帧会花屏 |
 
-判断方法：解析 NALU header 里的 `nal_ref_idc` 字段。**直播弱网降帧策略必须分辨这两种**——丢错了直接花屏。
+判断方法要分清两层：`nal_ref_idc == 0` 表示该 NALU **不被任何后续帧参考**（即"可丢"），这是裸 NAL header 就能读到的。但**它判断不出分层 B 的层级**（谁参考谁）——可靠的层级信息要靠 SVC 扩展的 prefix NAL / `temporal_id`，或编码器的 B 帧金字塔配置。所以工程上的弱网降帧:先用 `nal_ref_idc==0` 安全地丢"叶子帧",要做精细的分层丢弃才需要 temporal_id。**丢错了直接花屏**。
 
 ### 7.2 IDR 帧 ≠ I 帧
 
@@ -277,7 +380,9 @@ B 帧需要参考它后面的 P 帧才能解码。所以**解码器必须先解 
 - **PTS**（Presentation Time Stamp）：什么时候显示这帧
 - **DTS**（Decoding Time Stamp）：什么时候解码这帧
 
-无 B 帧时 `PTS == DTS`；**有 B 帧时 `PTS ≠ DTS`，解码器要按 DTS 顺序解码，渲染器按 PTS 顺序显示**。
+无 B 帧时解码顺序==显示顺序、`DTS` 单调递增（数值不一定等于 `PTS`，可能差个固定起始偏移）；**有 B 帧时 `PTS ≠ DTS`，解码器要按 DTS 顺序解码，渲染器按 PTS 顺序显示**。
+
+> MP4 里 `DTS` 由 `stts` 表（每帧解码时长）累加得到，`PTS` 则靠 `ctts` 表记录的 **composition offset（PTS − DTS 偏移）** 加回去。所以"有 B 帧的 MP4"必然带 `ctts` box；裸流转 MP4 时这套时序表由 muxer 构建（见 §10.2）。
 
 ### 8.2 单位是刻度不是秒
 
@@ -305,7 +410,7 @@ B 帧需要参考它后面的 P 帧才能解码。所以**解码器必须先解 
 
 ### 9.2 ADTS 给每帧穿一件 7 字节马甲
 
-ADTS Header 7 字节，包含：
+ADTS Header 7 字节（带 CRC 校验时为 9 字节），包含：
 
 - 同步字 `0xFFF`（定位帧开头）
 - 采样率索引
@@ -345,6 +450,8 @@ ffmpeg -i input.mp4 -c copy -bsf:v h264_mp4toannexb output.ts
 ### 10.2 为什么裸流转 MP4 要指定 framerate
 
 裸 `.h264` **只有编码字节，没有时间信息**。MP4 muxer 要写 `stts / ctts` 表必须知道帧率。不指定 framerate，输出 MP4 可能时长不对、播放快慢异常。
+
+> **VFR vs CFR 的坑**：上面按固定 framerate 重封装假设的是 **CFR（恒定帧率）**。但手机录制、屏幕录制、很多 WebRTC 采集是 **VFR（可变帧率）**——每帧间隔不等。对 VFR 源强行套一个固定 framerate 会导致音画不同步、整体变速。处理 VFR 要保留每帧真实 PTS（用 `-vsync vfr` / 透传时间戳），而不是用单一帧率重新生成时间轴。
 
 ### 10.3 查看流信息
 
