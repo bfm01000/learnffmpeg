@@ -169,6 +169,70 @@ ffmpeg 之所以这么庞大，是因为音视频这一整条链路上要处理�
 
 **一句话**：协议层决定的是"快、稳、能不能穿防火墙"。和编码、容器是三个独立的轴。
 
+### 3.8 直播协议与封装格式地图（RTMP / WebRTC / MP4 / TS / FLV）
+
+这块最容易混，因为大家口头上会说"RTMP 格式""WebRTC 流""MP4 视频"，但它们其实不在同一层：
+
+```text
+编码 Codec：   H.264 / H.265 / VP8 / VP9 / AV1 / AAC / Opus
+封装 Container：MP4 / fMP4 / FLV / TS / WebM
+协议 Protocol： RTMP / HTTP-FLV / HLS / DASH / WebRTC / RTSP / SRT
+```
+
+类比一下：
+
+```text
+编码 = 货物怎么压缩打包          H.264 / AAC
+封装 = 货物装进什么箱子          MP4 / FLV / TS
+协议 = 箱子走哪条运输路线        RTMP / HTTP / UDP / WebRTC
+```
+
+所以同样是 H.264 + AAC，可以装进 MP4 做点播文件，也可以装进 FLV 走 RTMP 推流，还可以切成 TS 片段走 HLS 分发。**编码内容可能一样，封装和协议完全不同。**
+
+常见组合先记这张表：
+
+| 场景 | 典型协议/方式 | 常见封装 | 常见编码 | 为什么这么选 |
+|---|---|---|---|---|
+| 本地文件 / 点播存储 | 文件读取 / HTTP 下载 | **MP4** | H.264/H.265 + AAC | 索引完整、可 seek、兼容性最好 |
+| 主播推流到服务器 | **RTMP** | **FLV Tag** | H.264 + AAC | 推流生态成熟，OBS/直播服务器都支持 |
+| 低延迟观看端 | **HTTP-FLV** | **FLV** | H.264 + AAC | 走 HTTP/TCP，穿透好，延迟比 HLS 低 |
+| 大规模 CDN 分发 | **HLS** | **TS** 或 **fMP4** | H.264/H.265 + AAC | HTTP CDN 友好，抗波动，延迟较高 |
+| 低延迟 DASH/CMAF | **DASH / LL-HLS** | **fMP4** | H.264/H.265/AV1 + AAC | 现代点播/直播切片体系，利于 ABR |
+| 连麦 / 视频会议 | **WebRTC** | 不走 MP4/FLV/TS，走 RTP/SRTP 包 | VP8/H.264/AV1 + Opus | 端到端实时、弱网控制、延迟最低 |
+| 监控 / 摄像头控制 | **RTSP** | RTP 承载，不是 MP4 文件 | H.264/H.265 + AAC/G.711 | 控制和媒体分离，安防生态常见 |
+
+几个重点关系：
+
+- **RTMP vs FLV**：RTMP 是传输协议，FLV 是封装格式。直播推流里常见的是"RTMP 传 FLV Tag"，里面装 H.264/AAC。RTMP 负责连接、握手、分块和发送；FLV 负责把音视频数据组织成 Audio/Video/Script Tag。
+- **HTTP-FLV vs RTMP**：两者都常用 FLV 封装。区别是 RTMP 走自己的协议，常用于主播端推流；HTTP-FLV 把 FLV 数据通过 HTTP 响应持续吐给播放器，常用于观看端低延迟播放。
+- **HLS vs TS/fMP4**：HLS 是分发协议/播放列表体系，核心是 `.m3u8` 索引 + 一段段媒体切片。早期切片常用 TS，现在也常用 fMP4。HLS 最大优势是 CDN 友好，缺点是天然有切片延迟。
+- **MP4 vs fMP4**：普通 MP4 适合完整文件，因为 `moov` 索引描述全片；直播没有"录完"这一刻，所以要么用 FLV/TS 这种流式封装，要么用 fragmented MP4（`moof + mdat`）一段段写。
+- **WebRTC 和 MP4/FLV/TS 不是一类东西**：WebRTC 是实时通信栈，媒体通常被编码成 VP8/H.264/AV1 + Opus 后，按 RTP/SRTP 包实时发送；它不把媒体先封成 MP4 或 FLV。WebRTC 强在低延迟、NACK/FEC/Jitter Buffer/拥塞控制，弱在大规模 CDN 分发成本和复杂度。
+
+一条典型直播链路可以这样理解：
+
+```text
+主播端 OBS
+  摄像头/麦克风
+  -> H.264 + AAC 编码
+  -> FLV Tag 封装
+  -> RTMP 推到服务器
+
+直播服务器
+  -> 转 HTTP-FLV：低延迟观看
+  -> 转 HLS(TS/fMP4)：大规模 CDN 分发
+  -> 转 WebRTC：连麦/超低延迟互动
+```
+
+选型直觉：
+
+- **要存文件、能拖进度条**：优先 MP4。
+- **要主播推流、生态兼容 OBS**：优先 RTMP + FLV。
+- **要普通观众低延迟看直播**：常见 HTTP-FLV。
+- **要几百万观众稳定看**：HLS / DASH + CDN。
+- **要连麦、会议、低于 500ms**：WebRTC。
+- **要安防摄像头拉流和控制**：RTSP/RTP。
+
 ---
 
 ## 四、系统全景图
@@ -187,8 +251,8 @@ ffmpeg 之所以这么庞大，是因为音视频这一整条链路上要处理�
               v                                                 v
    +----------------------+                          +---------------------+
    |   libavformat        |   <-- 容器 / 协议 -->     |   libavformat        |
-   |  封装 / 解封装       |       (mp4/flv/rtmp/      |   写出新的容器       |
-   |  AVFormatContext     |        rtsp/http/srt)    |                     |
+   |  封装 / 解封装       |       (mp4/flv/ts/hls/    |   写出新的容器       |
+   |  AVFormatContext     |        rtmp/rtsp/http/srt)|                     |
    +----------+-----------+                          +---------+-----------+
               |                                                ^
         AVPacket (压缩字节 + pts/dts + stream_index)            |
@@ -400,7 +464,7 @@ ffmpeg 之所以这么庞大，是因为音视频这一整条链路上要处理�
 - MP4 vs H.264 的层级，AVCC vs Annex-B
 - SPS / PPS 是什么，每个 IDR 前为什么要注入
 - 音视频同步策略，为什么以音频为主时钟
-- RTMP / HLS / HTTP-FLV / WebRTC 对比
+- RTMP / HLS / HTTP-FLV / WebRTC 对比，以及 MP4 / TS / FLV 封装场景
 - TCP 队头阻塞 vs UDP，QUIC 为什么用 UDP
 - H.264 Profile / Preset / Tune / CRF / CBR / VBR
 - 硬解码 vs 软解码，硬件帧如何下载
@@ -464,7 +528,7 @@ ffmpeg 之所以这么庞大，是因为音视频这一整条链路上要处理�
 5. `pts` 的单位是秒吗？怎么把它换算成秒？跨模块传递时要怎么处理？
 6. `av_packet_unref` 和 `av_packet_free` 的区别？循环处理一万帧应该用哪个？
 7. 视频流里 DTS 和 PTS 什么时候相等？什么时候不等？为什么？
-8. RTMP / HLS / HTTP-FLV / WebRTC 各自底层用 TCP 还是 UDP？延迟大致什么量级？哪个能穿透严格的企业防火墙？
+8. RTMP / HLS / HTTP-FLV / WebRTC 各自底层用 TCP 还是 UDP？它们和 MP4 / TS / FLV 这些封装格式分别是什么关系？
 9. `libswscale` 能处理来自硬件解码（NVDEC / VideoToolbox）的帧吗？为什么？正确做法是什么？
 10. ffmpeg 在 WebRTC 项目里扮演什么角色？为什么 WebRTC 不能用 ffmpeg 替代？
 
