@@ -1,0 +1,37 @@
+Doc/ffmpeg/09-题集与自检.md
+  68fdcf186e97161a 436-543,558-595,746,749,755-778
+  909d30c8fb562403 288-291,295-303
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4-insta360.1",
+  "base_commit_sha": "39f0e91b79e531eb75f882c7d68296982fb9e5af",
+  "prompts": {
+    "68fdcf186e97161a": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "15af6950-a5fd-42c2-9b4c-6b40972b54d8",
+        "model": "gpt-5.5"
+      },
+      "human_author": "dumenglin",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 240,
+      "overriden_lines": 0
+    },
+    "909d30c8fb562403": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a3f06d3f-fa71-467e-a4c2-9752dd5c1f1b",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "dumenglin",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 1120,
+      "overriden_lines": 0
+    }
+  }
+}
