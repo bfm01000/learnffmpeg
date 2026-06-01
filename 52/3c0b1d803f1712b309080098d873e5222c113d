@@ -1,0 +1,29 @@
+Doc/ffmpeg/README.md
+  909d30c8fb562403 44-46,71,101-104
+Doc/ffmpeg/08-网络协议与流媒体.md
+  909d30c8fb562403 235-236
+Doc/ffmpeg/99-学习进度.md
+  909d30c8fb562403 45-46,130-131
+Doc/ffmpeg/12-RTMP推流详解.md
+  909d30c8fb562403 1-303
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4-insta360.1",
+  "base_commit_sha": "523c0b1d803f1712b309080098d873e5222c113d",
+  "prompts": {
+    "909d30c8fb562403": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a3f06d3f-fa71-467e-a4c2-9752dd5c1f1b",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "dumenglin",
+      "messages": [],
+      "total_additions": 1552,
+      "total_deletions": 1,
+      "accepted_lines": 317,
+      "overriden_lines": 0
+    }
+  }
+}
