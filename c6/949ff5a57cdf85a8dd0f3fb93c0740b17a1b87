@@ -1,0 +1,28 @@
+Doc/ffmpeg/11-H264与H265详解.md
+  909d30c8fb562403 181-199
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4-insta360.1",
+  "base_commit_sha": "c6949ff5a57cdf85a8dd0f3fb93c0740b17a1b87",
+  "prompts": {
+    "909d30c8fb562403": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a3f06d3f-fa71-467e-a4c2-9752dd5c1f1b",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "dumenglin",
+      "messages": [],
+      "total_additions": 3913,
+      "total_deletions": 1033,
+      "accepted_lines": 3913,
+      "overriden_lines": 0
+    }
+  },
+  "humans": {
+    "h_3fc7cab4c90312": {
+      "author": "dumenglin"
+    }
+  }
+}
