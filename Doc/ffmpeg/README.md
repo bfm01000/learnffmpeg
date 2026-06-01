@@ -65,7 +65,7 @@
 | [06-编码参数与码控.md](./06-编码参数与码控.md) | H.264 Profile / Preset / Tune / CRF / CBR / VBR / 低延迟参数组合 | 3.1 |
 | [07-硬件编解码.md](./07-硬件编解码.md) | NVENC / VideoToolbox / QSV / 硬件帧 vs 软件帧 / av_hwframe_transfer_data / 硬件滤镜 | 3.6 |
 | [08-网络协议与流媒体.md](./08-网络协议与流媒体.md) | TCP vs UDP / 队头阻塞 / HTTPS / QUIC / RTMP / HLS / HTTP-FLV / WebRTC 实时栈（RTP/RTCP/ICE/SDP/SRTP/GCC/SFU）/ 协议伪装 | 3.7 |
-| [09-面试题集与自检.md](./09-面试题集与自检.md) | 9 主题 × 三档 60+ 面试题 + 答题模板 + 系统设计题 + 自评打分表 + 级别判断（贯穿全部主题） | 全部 |
+| [09-题集与自检.md](./09-题集与自检.md) | 9 主题 × 三档 68+ 面试题（§4 音频 15 题）+ 答题模板 + 系统设计题 + 自评打分表 + 级别判断（贯穿全部主题） | 全部 |
 | [10-移动端硬件编解码.md](./10-移动端硬件编解码.md) | Android MediaCodec（缓冲区队列 / CSD / 颜色格式坑 / Surface 零拷贝）/ iOS VideoToolbox（实时编码 / CVPixelBuffer / AVCC↔Annex-B）/ FFmpeg 两端支持边界 / WebRTC 衔接 | 6.5 / 硬件 |
 | [11-H264与H265详解.md](./11-H264与H265详解.md) | 编解码专题（面试导向）：压缩原理（四种冗余）/ H.264 宏块/帧类型/CAVLC-CABAC / H.265 CTU/SAO/WPP/VPS / 全面对比 / 使用场景与授权 / 坑与误区 / 面试速记 + 常考题 | 3.1 |
 | [12-RTMP推流详解.md](./12-RTMP推流详解.md) | RTMP 推流专题（08 推流深挖）：推流全链路 / 握手 C0-C1-C2 / Chunk 分块 / AMF 命令 connect-createStream-publish / 和 FLV Tag 关系 / ffmpeg-C API 推流实战 / 坑与误区 / 面试常考题 | 3.7 |
