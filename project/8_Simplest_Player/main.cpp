@@ -63,14 +63,46 @@ int main(int argc, char **argv) {
                 codecParameters->width, codecParameters->height,
                 avcodec_get_name(codecParameters->codec_id));
 
+    // ===== 阶段③：建解码器(AVCodec 算法本体 + AVCodecContext 工作环境)=====
+    // 这正是 01 §4 的核心：codecpar 只是"描述",要解码得建一个有状态的解码器实例。
+    // (1) 按编码 id 找到对应解码器(h264 → h264 解码器)。AVCodec 是无状态的算法本体,全局共享。
+    const AVCodec *decoder = avcodec_find_decoder(codecParameters->codec_id);
+    if (!decoder) {
+        std::fprintf(stderr, "找不到对应解码器\n");
+        avformat_close_input(&formatContext);
+        return 1;
+    }
+    // (2) 分配解码器上下文(AVCodecContext,有状态:存宽高、像素格式、内部参考帧缓冲等)。
+    AVCodecContext *codecContext = avcodec_alloc_context3(decoder);
+    if (!codecContext) {
+        std::fprintf(stderr, "分配解码器上下文失败\n");
+        avformat_close_input(&formatContext);
+        return 1;
+    }
+    // (3) 把流的参数(宽高/像素格式/extradata 即 SPS-PPS)从 codecpar 拷进上下文。
+    if (avcodec_parameters_to_context(codecContext, codecParameters) < 0) {
+        std::fprintf(stderr, "拷贝解码参数失败\n");
+        avcodec_free_context(&codecContext);
+        avformat_close_input(&formatContext);
+        return 1;
+    }
+    // (4) 启动底层解码引擎。这就是 01 §4.3 "初始化三步" 的最后一步。
+    if (avcodec_open2(codecContext, decoder, nullptr) < 0) {
+        std::fprintf(stderr, "打开解码器失败\n");
+        avcodec_free_context(&codecContext);
+        avformat_close_input(&formatContext);
+        return 1;
+    }
+    std::printf("✅ 解码器就绪: %s\n", decoder->name);
+
     // ===== 后续阶段(占位,逐步填) =====
-    // ③ 建解码器
     // ④ 解码循环
     // ⑤ YUV→RGB
     // ⑥ SDL 显示
     // ⑦ 节奏控制 + 清理
 
-    // 打开用 open / 关闭用 close：avformat_close_input 会释放上下文并把指针置空(见 01 §5.4)
+    // ===== 清理(初始化建的,退出时 free / close,见 01 §5.6)=====
+    avcodec_free_context(&codecContext);
     avformat_close_input(&formatContext);
     return 0;
 }
