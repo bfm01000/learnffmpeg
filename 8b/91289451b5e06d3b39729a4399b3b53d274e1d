@@ -1,0 +1,25 @@
+project/8_Simplest_Player/CMakeLists.txt
+  09645414dd278909 10,12
+project/8_Simplest_Player/main.cpp
+  09645414dd278909 28-29,31,36,39-59,173-195,212-214,216,336-366,372-375,377,386-415,425-426,428
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4-insta360.1",
+  "base_commit_sha": "8b91289451b5e06d3b39729a4399b3b53d274e1d",
+  "prompts": {
+    "09645414dd278909": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "489bb2f3-669e-447c-8ce1-60a4806cf054",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "dumenglin",
+      "messages": [],
+      "total_additions": 2607,
+      "total_deletions": 7,
+      "accepted_lines": 437,
+      "overriden_lines": 5
+    }
+  }
+}
