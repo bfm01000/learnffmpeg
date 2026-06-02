@@ -1,0 +1,36 @@
+project/8_Simplest_Player/main.cpp
+  909d30c8fb562403 66-97,104-105
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4-insta360.1",
+  "base_commit_sha": "92e723876d7d2bbebf70412aef114395b368e949",
+  "prompts": {
+    "09645414dd278909": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "489bb2f3-669e-447c-8ce1-60a4806cf054",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "dumenglin",
+      "messages": [],
+      "total_additions": 432,
+      "total_deletions": 0,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "909d30c8fb562403": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a3f06d3f-fa71-467e-a4c2-9752dd5c1f1b",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "dumenglin",
+      "messages": [],
+      "total_additions": 110,
+      "total_deletions": 2,
+      "accepted_lines": 137,
+      "overriden_lines": 2
+    }
+  }
+}
