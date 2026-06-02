@@ -1,0 +1,27 @@
+Doc/ffmpeg/99-学习进度.md
+  09645414dd278909 4,80-86,146,149-158,161-163,263,266
+project/9_Simplest_Transcoder/main.cpp
+  09645414dd278909 4
+project/9_Simplest_Transcoder/逐步讲解.md
+  09645414dd278909 1-219
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4-insta360.1",
+  "base_commit_sha": "1c5a78600d8a9af705ef86adacc2cf798dabade2",
+  "prompts": {
+    "09645414dd278909": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "489bb2f3-669e-447c-8ce1-60a4806cf054",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "dumenglin",
+      "messages": [],
+      "total_additions": 465,
+      "total_deletions": 7,
+      "accepted_lines": 912,
+      "overriden_lines": 0
+    }
+  }
+}
