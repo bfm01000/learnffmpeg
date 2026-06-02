@@ -103,11 +103,45 @@ int main(int argc, char **argv) {
     }
     std::printf("✅ 缩放器 + 编码器就绪\n");
 
+    // ===== T3：建输出容器 + 加输出流 + 写文件头 =====
+    // 输入侧用 avformat_open_input(读),输出侧用 avformat_alloc_output_context2(写)。
+    // 第三/四参传 nullptr,让它从输出路径的后缀(.mp4)推断封装格式。
+    AVFormatContext *outputFormatContext = nullptr;
+    avformat_alloc_output_context2(&outputFormatContext, nullptr, nullptr, outputPath);
+    if (!outputFormatContext) {
+        std::fprintf(stderr, "建不了输出容器(后缀认不出?)\n");
+        return 1;
+    }
+
+    // 给输出容器加一路视频流,并把"编码器的参数"拷进这路流的 codecpar(让容器知道流长啥样)。
+    // 注意方向:T1 是 parameters_to_context(流→解码器),这里是 from_context(编码器→流),正好相反。
+    AVStream *outputStream = avformat_new_stream(outputFormatContext, nullptr);
+    avcodec_parameters_from_context(outputStream->codecpar, encoderContext);
+    outputStream->time_base = encoderContext->time_base;
+
+    // 打开输出文件(有些格式不落地文件才跳过,mp4 要)。
+    if (!(outputFormatContext->oformat->flags & AVFMT_NOFILE)) {
+        if (avio_open(&outputFormatContext->pb, outputPath, AVIO_FLAG_WRITE) < 0) {
+            std::fprintf(stderr, "打不开输出文件: %s\n", outputPath);
+            return 1;
+        }
+    }
+    // 写文件头(容器的元信息)。这一步之后,outputStream->time_base 可能被 muxer 改成它偏好的值,
+    // 所以 T4 写包时要按"改过之后"的 time_base 来 rescale。
+    if (avformat_write_header(outputFormatContext, nullptr) < 0) {
+        std::fprintf(stderr, "写文件头失败\n");
+        return 1;
+    }
+    std::printf("✅ 输出容器就绪,已写文件头: %s\n", outputPath);
+
     // ===== 后续步骤(占位,逐步填) =====
-    // T3 输出容器 + 流 + 头
     // T4 转码循环 + flush + 尾
 
     // ===== 清理 =====
+    if (outputFormatContext && !(outputFormatContext->oformat->flags & AVFMT_NOFILE)) {
+        avio_closep(&outputFormatContext->pb);
+    }
+    avformat_free_context(outputFormatContext);
     avcodec_free_context(&encoderContext);
     sws_freeContext(scalerContext);
     avcodec_free_context(&decoderContext);
