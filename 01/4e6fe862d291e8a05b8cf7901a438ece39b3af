@@ -1,0 +1,44 @@
+Doc/ffmpeg/12-RTMP推流详解.md
+  h_3fc7cab4c90312 25,30,32-94,108,118,134,141-142,148,150,165,177,184,189,191,193,213-248,251-270,272,274-282,291-396,398-413,416,551-552,557,568,570,572,574
+  79bf5c71af6b1a94 249-250,271,283-290,397
+Doc/ffmpeg/99-学习进度.md
+  5b562837f09c18f3 87-88,207
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4-insta360.1",
+  "base_commit_sha": "014e6fe862d291e8a05b8cf7901a438ece39b3af",
+  "prompts": {
+    "5b562837f09c18f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d95bd8b7-ce04-45e5-93ff-b35125405ea8",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "dumenglin",
+      "messages": [],
+      "total_additions": 3,
+      "total_deletions": 1,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    },
+    "79bf5c71af6b1a94": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "f62e1953-f1cc-49c9-bfac-0008a8d1e7a0",
+        "model": "gpt-5.5"
+      },
+      "human_author": "dumenglin",
+      "messages": [],
+      "total_additions": 308,
+      "total_deletions": 6,
+      "accepted_lines": 84,
+      "overriden_lines": 5
+    }
+  },
+  "humans": {
+    "h_3fc7cab4c90312": {
+      "author": "dumenglin"
+    }
+  }
+}
