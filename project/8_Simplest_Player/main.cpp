@@ -7,9 +7,9 @@
 //   ② 读视频流信息(宽高/编码)
 //   ③ 建解码器(AVCodec + AVCodecContext)
 //   ④ 解码循环(send_packet / receive_frame)
-//   ⑤ YUV → RGB(SwsContext)                        ← 本步已完成
+//   ⑤ YUV → RGB(SwsContext)
 //   ⑥ SDL 开窗、把 RGB 画上去
-//   ⑦ 按 pts 控制播放节奏 + drain + 清理
+//   ⑦ 按 pts 控制播放节奏 + drain + 清理              ← 本步已完成(全流程通)
 //
 // 用法: ./simplest_player <视频文件.mp4>
 
@@ -21,6 +21,8 @@ extern "C" {
 #include <libavutil/imgutils.h>  // av_image_alloc：按宽高/格式分配一块对齐好的图像缓冲
 #include <libswscale/swscale.h>  // SwsContext：缩放 + 像素格式转换(YUV→RGB)
 }
+
+#include <SDL.h>  // SDL2：开窗、把 RGB 上传成纹理画到屏幕(C 库,但自带 extern "C",无需再包)
 
 #include <cstdio>
 
@@ -99,6 +101,16 @@ int main(int argc, char **argv) {
     }
     std::printf("✅ 解码器就绪: %s\n", decoder->name);
 
+    // ===== 阶段⑥ 准备：初始化 SDL 视频子系统 =====
+    // 这里只 Init 子系统(不需要宽高);窗口/渲染器/纹理等拿到首帧知道真实尺寸后再懒创建,
+    // 和⑤的 SwsContext 一个套路——用 frame 的确凿尺寸,比提前用 codecpar 更稳。
+    if (SDL_Init(SDL_INIT_VIDEO) < 0) {
+        std::fprintf(stderr, "SDL 初始化失败: %s\n", SDL_GetError());
+        avcodec_free_context(&codecContext);
+        avformat_close_input(&formatContext);
+        return 1;
+    }
+
     // ===== 阶段④：解码循环(send_packet / receive_frame 异步状态机,见 01 §6.4)=====
     // 核心心智模型：发包和取帧是"解耦"的两条管道,不是 1 进 1 出。
     //   - 喂一个 packet 进去,可能一帧都取不出来(B 帧要等后续参考帧,解码器先攒着)；
@@ -125,17 +137,18 @@ int main(int argc, char **argv) {
     uint8_t *rgbData[4] = {nullptr};  // 目标缓冲的 4 个平面指针(RGB 是 packed,只用 rgbData[0])
     int rgbLinesize[4] = {0};         // 每个平面的行字节数(含对齐填充,可能 > width*3)
 
-    // 把一帧 RGB24 存成 PPM 图片(P6),纯为本步做"无窗口验证"用——下一步⑥接 SDL 后会删掉。
-    // 注意按 stride(rgbLinesize[0]) 逐行写,不能一把 fwrite,否则会把行尾填充也写进去导致斜切。
-    auto dumpFrameAsPPM = [](const char *path, uint8_t *rgb, int stride, int width, int height) {
-        std::FILE *file = std::fopen(path, "wb");
-        if (!file) return;
-        std::fprintf(file, "P6\n%d %d\n255\n", width, height);
-        for (int row = 0; row < height; ++row) {
-            std::fwrite(rgb + (size_t)row * stride, 1, (size_t)width * 3, file);
-        }
-        std::fclose(file);
-    };
+    // ===== 阶段⑥ 的状态：SDL 窗口/渲染器/纹理(都懒创建,首帧时按真实尺寸建)=====
+    SDL_Window *window = nullptr;
+    SDL_Renderer *renderer = nullptr;
+    SDL_Texture *texture = nullptr;
+    bool quitRequested = false;       // 用户点了窗口关闭按钮 → 提前结束播放
+
+    // ===== 阶段⑦ 的状态：按 pts 控制节奏 =====
+    // time_base 是这一路流的"时间单位"(一个有理数,比如 1/12800 秒)。frame->pts 是以它为单位的整数,
+    // pts × time_base = 这帧应该显示的"秒数"。不控制的话会"解多快放多快"——一秒放完整段。
+    double timeBaseSeconds = av_q2d(videoStream->time_base);
+    Uint32 playbackStartTicks = 0;    // 第一帧显示瞬间的墙钟(ms),作为整段播放的时间原点
+    bool playbackStarted = false;
 
     // 内层:把解码器当前攒着的帧全部取出来。封装成 lambda 复用——drain 阶段(末尾)也要调它。
     auto drainDecodedFrames = [&]() {
@@ -163,7 +176,7 @@ int main(int argc, char **argv) {
                 firstFramePrinted = true;
             }
 
-            // 懒创建转换器:第一帧时按它的真实宽高/像素格式建好 SwsContext 和 RGB 目标缓冲。
+            // 懒创建:第一帧时按它的真实宽高/像素格式建好 SwsContext、RGB 缓冲、SDL 窗口与纹理。
             if (!swsContext) {
                 swsContext = sws_getContext(
                     frame->width, frame->height, (AVPixelFormat)frame->format,  // 源:YUV420P
@@ -172,6 +185,16 @@ int main(int argc, char **argv) {
                 // 按目标格式分配对齐缓冲;返回的 rgbLinesize[0] 才是真实行宽,后面拷贝都按它走。
                 av_image_alloc(rgbData, rgbLinesize,
                                frame->width, frame->height, AV_PIX_FMT_RGB24, 1);
+
+                // SDL 窗口大小 = 视频尺寸。渲染器负责把纹理画上去(优先硬件加速)。
+                window = SDL_CreateWindow("simplest_player",
+                                          SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                                          frame->width, frame->height, SDL_WINDOW_SHOWN);
+                renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+                // 纹理像素格式必须和⑤的输出对上:RGB24。STREAMING 表示每帧都会更新它的内容。
+                texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGB24,
+                                            SDL_TEXTUREACCESS_STREAMING,
+                                            frame->width, frame->height);
             }
 
             // 真正的转换:把 YUV 三平面喂进去,吐出一整块 RGB24。
@@ -180,19 +203,44 @@ int main(int argc, char **argv) {
                       frame->data, frame->linesize, 0, frame->height,
                       rgbData, rgbLinesize);
 
-            // 本步验证:把第一帧 RGB 落盘成 PPM,跳出去用图片工具/ffprobe 看画面对不对。
-            if (decodedFrameCount == 1) {
-                dumpFrameAsPPM("first_frame.ppm", rgbData[0], rgbLinesize[0],
-                               frame->width, frame->height);
-                std::printf("已转 RGB 并导出首帧 → first_frame.ppm (stride=%d)\n", rgbLinesize[0]);
+            // --- ⑥ 处理窗口事件:点了关闭按钮就请求退出(否则窗口会"未响应") ---
+            SDL_Event event;
+            while (SDL_PollEvent(&event)) {
+                if (event.type == SDL_QUIT) {
+                    quitRequested = true;
+                }
             }
+            if (quitRequested) {
+                av_frame_unref(frame);
+                break;  // 跳出内层取帧循环;外层也会因为这个标志一起停
+            }
+
+            // --- ⑦ 按 pts 控制节奏:算出这帧"该在第几毫秒显示",没到就 SDL_Delay 等一会 ---
+            if (!playbackStarted) {
+                playbackStartTicks = SDL_GetTicks();  // 以第一帧为时间原点
+                playbackStarted = true;
+            }
+            if (frame->pts != AV_NOPTS_VALUE) {
+                double targetMs = frame->pts * timeBaseSeconds * 1000.0;       // 该显示的时刻
+                double elapsedMs = SDL_GetTicks() - playbackStartTicks;       // 已经过去多久
+                if (targetMs > elapsedMs) {
+                    SDL_Delay((Uint32)(targetMs - elapsedMs));                // 太快了,等差值
+                }
+            }
+
+            // --- ⑥ 把这帧 RGB 上传到纹理,清屏、拷贝、呈现 ---
+            // UpdateTexture 的最后一个参数是源数据的行字节数,必须传 rgbLinesize[0](不是 width*3)。
+            SDL_UpdateTexture(texture, nullptr, rgbData[0], rgbLinesize[0]);
+            SDL_RenderClear(renderer);
+            SDL_RenderCopy(renderer, texture, nullptr, nullptr);
+            SDL_RenderPresent(renderer);
 
             av_frame_unref(frame);  // 取完这帧,释放它持有的缓冲引用,容器留着下轮复用
         }
     };
 
     // 外层:不停从文件读 packet,只喂视频流的包给解码器。
-    while (av_read_frame(formatContext, packet) >= 0) {
+    while (!quitRequested && av_read_frame(formatContext, packet) >= 0) {
         if (packet->stream_index == videoStreamIndex) {
             if (avcodec_send_packet(codecContext, packet) >= 0) {
                 drainDecodedFrames();
@@ -203,16 +251,19 @@ int main(int argc, char **argv) {
 
     // drain(冲刷):文件读完了,但解码器内部可能还攒着几帧(尤其有 B 帧时)。
     // 喂一个 NULL 包告诉它"没有更多输入了",再把残余帧取干净(见 01 §6.4 drain)。
-    avcodec_send_packet(codecContext, nullptr);
-    drainDecodedFrames();
+    // 用户中途关窗就不必 drain 了。
+    if (!quitRequested) {
+        avcodec_send_packet(codecContext, nullptr);
+        drainDecodedFrames();
+    }
 
-    std::printf("✅ 解码完成,共 %ld 帧\n", decodedFrameCount);
+    std::printf("✅ 播放结束,共显示 %ld 帧\n", decodedFrameCount);
 
-    // ===== 后续阶段(占位,逐步填) =====
-    // ⑥ SDL 显示
-    // ⑦ 节奏控制
-
-    // ===== 清理(初始化建的,退出时 free / close,见 01 §5.6)=====
+    // ===== 清理(初始化建的,退出时 free / close / destroy,见 01 §5.6)=====
+    SDL_DestroyTexture(texture);     // 注意:对 nullptr 调用这些 SDL_Destroy 是安全的(空操作)
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(window);
+    SDL_Quit();
     sws_freeContext(swsContext);     // 转换器
     av_freep(&rgbData[0]);           // av_image_alloc 分配的 RGB 缓冲(只 free 第 0 个指针)
     av_frame_free(&frame);
