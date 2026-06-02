@@ -4,10 +4,10 @@
 // 📖 逐步原理讲解(配套复习文档)：见同目录 逐步讲解.md
 //
 // 整体框架(4 步,逐步填充):
-//   T1 打开输入、找视频流、建解码器                  ← 本步已完成
+//   T1 打开输入、找视频流、建解码器
 //   T2 建缩放器(SwsContext 降分辨率) + 建编码器(libx264)
 //   T3 建输出容器 + 加输出流 + 写文件头
-//   T4 转码循环(读→解→缩放→编码→rescale 时间戳→写) + flush + 写尾
+//   T4 转码循环(读→解→缩放→编码→rescale 时间戳→写) + flush + 写尾   ← 本步已完成(全流程通)
 //
 // 用法: ./simplest_transcoder <输入.mp4> <输出.mp4>
 
@@ -134,10 +134,80 @@ int main(int argc, char **argv) {
     }
     std::printf("✅ 输出容器就绪,已写文件头: %s\n", outputPath);
 
-    // ===== 后续步骤(占位,逐步填) =====
-    // T4 转码循环 + flush + 尾
+    // ===== T4：转码循环 =====
+    AVPacket *inputPacket = av_packet_alloc();    // 从输入读出的压缩包
+    AVPacket *encodedPacket = av_packet_alloc();   // 编码器吐出的压缩包
+    AVFrame *decodedFrame = av_frame_alloc();      // 解码出的原始帧(原尺寸)
+    // 缩放后的帧:要先分配自己的像素缓冲(解码帧的缓冲是解码器的,尺寸也不对)。
+    AVFrame *scaledFrame = av_frame_alloc();
+    scaledFrame->format = AV_PIX_FMT_YUV420P;
+    scaledFrame->width = kOutputWidth;
+    scaledFrame->height = kOutputHeight;
+    av_frame_get_buffer(scaledFrame, 0);
+
+    long writtenPacketCount = 0;
+
+    // 编码并写出:把一帧(或 NULL=flush)送进编码器,把吐出的包逐个 rescale 时间戳后写进输出。
+    // 这是解码 send/receive 的镜像——编码是 send_frame / receive_packet。
+    auto encodeAndWrite = [&](AVFrame *frameToEncode) {
+        if (avcodec_send_frame(encoderContext, frameToEncode) < 0) return;
+        while (true) {
+            int receiveResult = avcodec_receive_packet(encoderContext, encodedPacket);
+            if (receiveResult == AVERROR(EAGAIN) || receiveResult == AVERROR_EOF) break;
+            if (receiveResult < 0) { std::fprintf(stderr, "编码出错\n"); break; }
+
+            // ★ 关键:编码器的时间戳用的是"编码器 time_base",写进容器前要换算成"输出流 time_base"。
+            // 这就是转码里最容易错的一环——两套时间刻度不一致,不换算会快放/慢放/时间戳错乱(见 05 PTS/DTS)。
+            av_packet_rescale_ts(encodedPacket, encoderContext->time_base, outputStream->time_base);
+            encodedPacket->stream_index = outputStream->index;
+            av_interleaved_write_frame(outputFormatContext, encodedPacket);  // 按 dts 交织写入
+            av_packet_unref(encodedPacket);
+            ++writtenPacketCount;
+        }
+    };
+
+    // 解码并转码:把解码器吐的每一帧缩放→拷 pts→送编码。封装成 lambda,drain 阶段也复用。
+    auto decodeScaleEncode = [&]() {
+        while (true) {
+            int receiveResult = avcodec_receive_frame(decoderContext, decodedFrame);
+            if (receiveResult == AVERROR(EAGAIN) || receiveResult == AVERROR_EOF) break;
+            if (receiveResult < 0) { std::fprintf(stderr, "解码出错\n"); break; }
+
+            av_frame_make_writable(scaledFrame);  // 复用缓冲前确保可写(COW,见 01 §5.7)
+            sws_scale(scalerContext,
+                      decodedFrame->data, decodedFrame->linesize, 0, decoderContext->height,
+                      scaledFrame->data, scaledFrame->linesize);
+            // sws_scale 不搬时间戳,得手动把 pts 接力过去(编码器和输入流同 time_base,可直接拷)。
+            scaledFrame->pts = decodedFrame->pts;
+            encodeAndWrite(scaledFrame);
+            av_frame_unref(decodedFrame);
+        }
+    };
+
+    // 主循环:只处理视频包,喂解码器。
+    while (av_read_frame(inputFormatContext, inputPacket) >= 0) {
+        if (inputPacket->stream_index == videoStreamIndex) {
+            if (avcodec_send_packet(decoderContext, inputPacket) >= 0) {
+                decodeScaleEncode();
+            }
+        }
+        av_packet_unref(inputPacket);
+    }
+
+    // 两级 flush:先冲解码器(把攒着的帧解出来转码),再冲编码器(把攒着的包吐出来写)。
+    avcodec_send_packet(decoderContext, nullptr);
+    decodeScaleEncode();
+    encodeAndWrite(nullptr);   // NULL 帧 = 通知编码器 flush
+
+    // 写文件尾(mp4 的 moov 等收尾信息),这步不做文件会损坏/不可播。
+    av_write_trailer(outputFormatContext);
+    std::printf("✅ 转码完成,写出 %ld 个视频包 → %s\n", writtenPacketCount, outputPath);
 
     // ===== 清理 =====
+    av_frame_free(&scaledFrame);
+    av_frame_free(&decodedFrame);
+    av_packet_free(&encodedPacket);
+    av_packet_free(&inputPacket);
     if (outputFormatContext && !(outputFormatContext->oformat->flags & AVFMT_NOFILE)) {
         avio_closep(&outputFormatContext->pb);
     }
