@@ -15,6 +15,7 @@ extern "C" {
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
 #include <libavutil/imgutils.h>
+#include <libavutil/opt.h>       // av_opt_set：给 libx264 设 crf / preset 这类私有参数
 #include <libswscale/swscale.h>
 }
 
@@ -69,12 +70,46 @@ int main(int argc, char **argv) {
                 decoderContext->width, decoderContext->height, decoder->name,
                 kOutputWidth, kOutputHeight, kCrf, kPreset);
 
+    // ===== T2-a：缩放器——把解码出的帧从原尺寸缩到 640x360(仍是 YUV420P)=====
+    // 和播放器⑤同样的 SwsContext,只是这次目标不是 RGB 而是"小一号的 YUV"(编码器吃 YUV)。
+    SwsContext *scalerContext = sws_getContext(
+        decoderContext->width, decoderContext->height, decoderContext->pix_fmt,  // 源
+        kOutputWidth, kOutputHeight, AV_PIX_FMT_YUV420P,                          // 目标
+        SWS_BILINEAR, nullptr, nullptr, nullptr);
+
+    // ===== T2-b：建编码器(libx264)——解码的镜像,把 YUV 帧压成 H.264 包 =====
+    const AVCodec *encoder = avcodec_find_encoder_by_name("libx264");
+    if (!encoder) {
+        std::fprintf(stderr, "找不到 libx264 编码器\n");
+        return 1;
+    }
+    AVCodecContext *encoderContext = avcodec_alloc_context3(encoder);
+    encoderContext->width = kOutputWidth;
+    encoderContext->height = kOutputHeight;
+    encoderContext->pix_fmt = AV_PIX_FMT_YUV420P;   // H.264 最通用的像素格式
+    // time_base:编码器的"时间单位"。沿用输入流的 time_base,这样解码帧的 pts 能直接喂给编码器。
+    encoderContext->time_base = inputVideoStream->time_base;
+    encoderContext->framerate = inputVideoStream->avg_frame_rate;
+    encoderContext->gop_size = 12;                  // 关键帧间隔(每 12 帧一个 I 帧,见 05 §GOP)
+    // CRF / preset 是 libx264 的私有参数,通过 priv_data 设(见 06)。
+    av_opt_set(encoderContext->priv_data, "crf", kCrf, 0);
+    av_opt_set(encoderContext->priv_data, "preset", kPreset, 0);
+    // 我们固定输出 mp4,mp4 要求 SPS/PPS 放在容器头(global header)而不是每个包里。
+    // 所以这里直接设这个 flag;通用写法是建完输出容器后判 oformat->flags & AVFMT_GLOBALHEADER。
+    encoderContext->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+    if (avcodec_open2(encoderContext, encoder, nullptr) < 0) {
+        std::fprintf(stderr, "打开编码器失败\n");
+        return 1;
+    }
+    std::printf("✅ 缩放器 + 编码器就绪\n");
+
     // ===== 后续步骤(占位,逐步填) =====
-    // T2 缩放器 + 编码器
     // T3 输出容器 + 流 + 头
     // T4 转码循环 + flush + 尾
 
     // ===== 清理 =====
+    avcodec_free_context(&encoderContext);
+    sws_freeContext(scalerContext);
     avcodec_free_context(&decoderContext);
     avformat_close_input(&inputFormatContext);
     return 0;
