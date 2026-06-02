@@ -1,15 +1,21 @@
-// 最简视频播放器：demux MP4 → decode H.264 → swscale 转 RGB → SDL 显示
-// 对应 Doc/ffmpeg/99-学习进度.md 优先级 1。只播视频、不含音频。
+// 最简播放器：demux MP4 → decode → 视频(swscale→SDL 画面) + 音频(swr→SDL 出声)
+// 对应 Doc/ffmpeg/99-学习进度.md 优先级 1/3。
 // 📖 逐步原理讲解(配套复习文档)：见同目录 逐步讲解.md
 //
-// 整体框架(7 步,逐步填充):
+// 视频框架(7 步,已完成):
 //   ① 解封装：打开文件、找视频流
 //   ② 读视频流信息(宽高/编码)
 //   ③ 建解码器(AVCodec + AVCodecContext)
 //   ④ 解码循环(send_packet / receive_frame)
 //   ⑤ YUV → RGB(SwsContext)
 //   ⑥ SDL 开窗、把 RGB 画上去
-//   ⑦ 按 pts 控制播放节奏 + drain + 清理              ← 本步已完成(全流程通)
+//   ⑦ 按 pts 控制播放节奏 + drain + 清理
+//
+// 音频续作(A1~A4,进行中):
+//   A1 找音频流 + 建音频解码器(镜像②③)                ← 本步已完成
+//   A2 解码音频 + swr 重采样成 S16 交错立体声
+//   A3 SDL 打开音频设备 + 播放 PCM
+//   A4 音频时钟作主时钟,视频追音频(重写⑦ + 补丢帧)
 //
 // 用法: ./simplest_player <视频文件.mp4>
 
@@ -25,6 +31,23 @@ extern "C" {
 #include <SDL.h>  // SDL2：开窗、把 RGB 上传成纹理画到屏幕(C 库,但自带 extern "C",无需再包)
 
 #include <cstdio>
+
+// 建解码器并打开——视频③已逐行讲过这四步(find_decoder → alloc_context3 →
+// parameters_to_context → open2)。音频是一模一样的流程,所以抽成函数复用:
+// 第一次(视频③)展开全讲,第二次(音频 A1)就该抽象掉,别复制粘贴。
+// 失败时把已分配的上下文 free 掉再返回 nullptr,调用方只需判空。
+static AVCodecContext *openDecoder(AVStream *stream) {
+    const AVCodec *decoder = avcodec_find_decoder(stream->codecpar->codec_id);
+    if (!decoder) return nullptr;
+    AVCodecContext *context = avcodec_alloc_context3(decoder);
+    if (!context) return nullptr;
+    if (avcodec_parameters_to_context(context, stream->codecpar) < 0 ||
+        avcodec_open2(context, decoder, nullptr) < 0) {
+        avcodec_free_context(&context);
+        return nullptr;
+    }
+    return context;
+}
 
 int main(int argc, char **argv) {
     if (argc < 2) {
@@ -100,6 +123,27 @@ int main(int argc, char **argv) {
         return 1;
     }
     std::printf("✅ 解码器就绪: %s\n", decoder->name);
+
+    // ===== A1：找音频流 + 建音频解码器(可选——没有音频也能只播视频)=====
+    // 和②找视频流同理,这次找 AUDIO。音频可能不存在(纯视频文件),所以是"有就接、没有就跳过"。
+    int audioStreamIndex =
+        av_find_best_stream(formatContext, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
+    AVStream *audioStream = nullptr;
+    AVCodecContext *audioCodecContext = nullptr;
+    if (audioStreamIndex >= 0) {
+        audioStream = formatContext->streams[audioStreamIndex];
+        audioCodecContext = openDecoder(audioStream);  // 和视频③同样的四步,复用函数
+        if (audioCodecContext) {
+            // ch_layout 是新版声道布局 API(旧的 ->channels 已废弃);采样格式这里通常是 fltp(planar float)。
+            std::printf("音频流 #%d, %d Hz, %d 声道, 采样格式=%s, 编码=%s\n",
+                        audioStreamIndex, audioCodecContext->sample_rate,
+                        audioCodecContext->ch_layout.nb_channels,
+                        av_get_sample_fmt_name(audioCodecContext->sample_fmt),
+                        avcodec_get_name(audioCodecContext->codec_id));
+        }
+    } else {
+        std::printf("(没有音频流,只播视频)\n");
+    }
 
     // ===== 阶段⑥ 准备：初始化 SDL 视频子系统 =====
     // 这里只 Init 子系统(不需要宽高);窗口/渲染器/纹理等拿到首帧知道真实尺寸后再懒创建,
@@ -268,6 +312,7 @@ int main(int argc, char **argv) {
     av_freep(&rgbData[0]);           // av_image_alloc 分配的 RGB 缓冲(只 free 第 0 个指针)
     av_frame_free(&frame);
     av_packet_free(&packet);
+    avcodec_free_context(&audioCodecContext);  // 对 nullptr 安全(没音频时本就是 nullptr)
     avcodec_free_context(&codecContext);
     avformat_close_input(&formatContext);
     return 0;
