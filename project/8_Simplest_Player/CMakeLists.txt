@@ -7,8 +7,9 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # FFmpeg / SDL2 在 macOS / Linux(含 WSL2) 上都用 pkg-config 暴露元信息(见 01 §8.3)
+# libswresample：音频重采样(接音频 A2 起用到)
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(FFMPEG REQUIRED libavformat libavcodec libavutil libswscale)
+pkg_check_modules(FFMPEG REQUIRED libavformat libavcodec libavutil libswscale libswresample)
 pkg_check_modules(SDL2 REQUIRED sdl2)
 
 add_executable(simplest_player main.cpp)

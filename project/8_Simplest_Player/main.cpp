@@ -25,12 +25,37 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavutil/pixdesc.h>   // av_get_pix_fmt_name：把像素格式枚举转成可读名("yuv420p")
 #include <libavutil/imgutils.h>  // av_image_alloc：按宽高/格式分配一块对齐好的图像缓冲
+#include <libavutil/samplefmt.h> // av_get_sample_fmt_name / av_get_bytes_per_sample
+#include <libavutil/mathematics.h>  // av_rescale_rnd：按采样率比例算输出样本数
 #include <libswscale/swscale.h>  // SwsContext：缩放 + 像素格式转换(YUV→RGB)
+#include <libswresample/swresample.h>  // SwrContext：音频重采样(采样率/声道/采样格式转换)
 }
 
 #include <SDL.h>  // SDL2：开窗、把 RGB 上传成纹理画到屏幕(C 库,但自带 extern "C",无需再包)
 
+#include <cstdint>
 #include <cstdio>
+
+// 写一个标准 44 字节 WAV 头(PCM)。仅 A2 用来把重采样后的 PCM 落盘验证,A3 接 SDL 播放后删掉。
+// 注意:直接 fwrite 整数 = 小端字节序,x86/arm 都是小端,所以这里直接写没问题(大端机要转)。
+static void writeWavHeader(std::FILE *file, int sampleRate, int channels,
+                           int bitsPerSample, uint32_t dataBytes) {
+    uint32_t byteRate = sampleRate * channels * bitsPerSample / 8;
+    uint16_t blockAlign = channels * bitsPerSample / 8;
+    uint32_t riffSize = 36 + dataBytes;
+    uint32_t fmtChunkSize = 16;
+    uint16_t pcmFormatTag = 1;  // 1 = 未压缩 PCM
+    uint16_t channelCount = (uint16_t)channels;
+    uint16_t bits = (uint16_t)bitsPerSample;
+    uint32_t rate = (uint32_t)sampleRate;
+    std::fwrite("RIFF", 1, 4, file);          std::fwrite(&riffSize, 4, 1, file);
+    std::fwrite("WAVE", 1, 4, file);
+    std::fwrite("fmt ", 1, 4, file);          std::fwrite(&fmtChunkSize, 4, 1, file);
+    std::fwrite(&pcmFormatTag, 2, 1, file);   std::fwrite(&channelCount, 2, 1, file);
+    std::fwrite(&rate, 4, 1, file);           std::fwrite(&byteRate, 4, 1, file);
+    std::fwrite(&blockAlign, 2, 1, file);     std::fwrite(&bits, 2, 1, file);
+    std::fwrite("data", 1, 4, file);          std::fwrite(&dataBytes, 4, 1, file);
+}
 
 // 建解码器并打开——视频③已逐行讲过这四步(find_decoder → alloc_context3 →
 // parameters_to_context → open2)。音频是一模一样的流程,所以抽成函数复用:
@@ -145,6 +170,29 @@ int main(int argc, char **argv) {
         std::printf("(没有音频流,只播视频)\n");
     }
 
+    // ===== A2 准备：建音频重采样器(swr)+ 打开 WAV 落盘验证 =====
+    // 解码器吐的音频通常是 fltp(planar float,每声道一个平面),但 SDL/WAV 要的是
+    // S16 交错(packed,左右声道样本交替排)。swr 就负责这层转换(采样率/声道/格式)。见 04 §重采样。
+    SwrContext *swrContext = nullptr;
+    const int outSampleRate = 48000;
+    const AVSampleFormat outSampleFormat = AV_SAMPLE_FMT_S16;     // 16 位有符号整数,SDL 最常用
+    AVChannelLayout outChannelLayout = AV_CHANNEL_LAYOUT_STEREO;  // 统一输出立体声(单声道源会被复制成两声道)
+    const int outChannels = outChannelLayout.nb_channels;
+    const int outBytesPerSample = av_get_bytes_per_sample(outSampleFormat);
+    std::FILE *wavFile = nullptr;
+    uint32_t wavDataBytes = 0;
+    if (audioCodecContext) {
+        // 目标参数在前、源参数在后。swr 会把源(fltp/48k/单声道)转成目标(S16/48k/立体声)。
+        swr_alloc_set_opts2(&swrContext,
+                            &outChannelLayout, outSampleFormat, outSampleRate,
+                            &audioCodecContext->ch_layout, audioCodecContext->sample_fmt,
+                            audioCodecContext->sample_rate, 0, nullptr);
+        swr_init(swrContext);
+        // 先写一个 dataBytes=0 的占位头,边转边追加 PCM,最后再回头把真实大小补上。
+        wavFile = std::fopen("audio_out.wav", "wb");
+        if (wavFile) writeWavHeader(wavFile, outSampleRate, outChannels, 8 * outBytesPerSample, 0);
+    }
+
     // ===== 阶段⑥ 准备：初始化 SDL 视频子系统 =====
     // 这里只 Init 子系统(不需要宽高);窗口/渲染器/纹理等拿到首帧知道真实尺寸后再懒创建,
     // 和⑤的 SwsContext 一个套路——用 frame 的确凿尺寸,比提前用 codecpar 更稳。
@@ -161,9 +209,11 @@ int main(int argc, char **argv) {
     //   - 也可能一次取出好几帧。所以是"喂一个包 → 把当前能取的帧全取干净"的双层循环。
     // packet 装"压缩数据"(一个 NALU 序列),frame 装"解码后的原始像素"(这里是 YUV420P)。
     AVPacket *packet = av_packet_alloc();   // 容器复用：每轮读进数据、循环末尾 unref 释放引用
-    AVFrame *frame = av_frame_alloc();      // 同理,receive 拿到帧、用完 unref
-    if (!packet || !frame) {
+    AVFrame *frame = av_frame_alloc();      // 视频帧:receive 拿到、用完 unref
+    AVFrame *audioFrame = av_frame_alloc(); // 音频帧:同理(A2 起用)
+    if (!packet || !frame || !audioFrame) {
         std::fprintf(stderr, "分配 packet/frame 失败\n");
+        av_frame_free(&audioFrame);
         av_frame_free(&frame);
         av_packet_free(&packet);
         avcodec_free_context(&codecContext);
@@ -283,14 +333,48 @@ int main(int argc, char **argv) {
         }
     };
 
-    // 外层:不停从文件读 packet,只喂视频流的包给解码器。
+    // ===== A2：音频版的"取干净"——receive 音频帧 → swr 重采样到 S16 立体声 → 写 WAV =====
+    // 结构和视频 drainDecodedFrames 完全对称(send/receive 是通用状态机,音视频都一样)。
+    auto drainAudioFrames = [&]() {
+        while (true) {
+            int receiveResult = avcodec_receive_frame(audioCodecContext, audioFrame);
+            if (receiveResult == AVERROR(EAGAIN) || receiveResult == AVERROR_EOF) break;
+            if (receiveResult < 0) { std::fprintf(stderr, "音频解码出错\n"); break; }
+
+            // 输出样本数(每声道)要把重采样器内部缓着的延迟也算上,否则会少几个样本。
+            int maxOutSamples = (int)av_rescale_rnd(
+                swr_get_delay(swrContext, audioCodecContext->sample_rate) + audioFrame->nb_samples,
+                outSampleRate, audioCodecContext->sample_rate, AV_ROUND_UP);
+
+            uint8_t *outBuffer = nullptr;
+            av_samples_alloc(&outBuffer, nullptr, outChannels, maxOutSamples, outSampleFormat, 0);
+
+            // swr_convert 返回"实际转出多少样本/声道"。S16 交错下整块数据 = 样本数 × 声道 × 每样本字节。
+            int convertedSamples = swr_convert(swrContext, &outBuffer, maxOutSamples,
+                                               (const uint8_t **)audioFrame->data,
+                                               audioFrame->nb_samples);
+            if (convertedSamples > 0 && wavFile) {
+                int byteCount = convertedSamples * outChannels * outBytesPerSample;
+                std::fwrite(outBuffer, 1, byteCount, wavFile);
+                wavDataBytes += (uint32_t)byteCount;
+            }
+            av_freep(&outBuffer);   // 每帧 alloc/free 简单直观;真播放器会复用一块大缓冲(优化留到 A3)
+            av_frame_unref(audioFrame);
+        }
+    };
+
+    // 外层:不停从文件读 packet,视频包喂视频解码器、音频包喂音频解码器。
     while (!quitRequested && av_read_frame(formatContext, packet) >= 0) {
         if (packet->stream_index == videoStreamIndex) {
             if (avcodec_send_packet(codecContext, packet) >= 0) {
                 drainDecodedFrames();
             }
+        } else if (audioCodecContext && packet->stream_index == audioStreamIndex) {
+            if (avcodec_send_packet(audioCodecContext, packet) >= 0) {
+                drainAudioFrames();
+            }
         }
-        av_packet_unref(packet);  // 不论是不是视频包,读进来的 packet 用完都要 unref(见 01 §5.2)
+        av_packet_unref(packet);  // 不论哪种包,读进来用完都要 unref(见 01 §5.2)
     }
 
     // drain(冲刷):文件读完了,但解码器内部可能还攒着几帧(尤其有 B 帧时)。
@@ -299,6 +383,36 @@ int main(int argc, char **argv) {
     if (!quitRequested) {
         avcodec_send_packet(codecContext, nullptr);
         drainDecodedFrames();
+        if (audioCodecContext) {
+            avcodec_send_packet(audioCodecContext, nullptr);
+            drainAudioFrames();
+            // 再冲刷 swr 内部残留的几个样本(传 NULL 输入),WAV 时长才精确。
+            if (swrContext && wavFile) {
+                uint8_t *tailBuffer = nullptr;
+                int tailMax = (int)av_rescale_rnd(
+                    swr_get_delay(swrContext, audioCodecContext->sample_rate),
+                    outSampleRate, audioCodecContext->sample_rate, AV_ROUND_UP);
+                if (tailMax > 0) {
+                    av_samples_alloc(&tailBuffer, nullptr, outChannels, tailMax, outSampleFormat, 0);
+                    int n = swr_convert(swrContext, &tailBuffer, tailMax, nullptr, 0);
+                    if (n > 0) {
+                        int byteCount = n * outChannels * outBytesPerSample;
+                        std::fwrite(tailBuffer, 1, byteCount, wavFile);
+                        wavDataBytes += (uint32_t)byteCount;
+                    }
+                    av_freep(&tailBuffer);
+                }
+            }
+        }
+    }
+
+    // WAV 头当初写的是占位大小,现在回到文件开头补上真实的 dataBytes。
+    if (wavFile) {
+        std::fseek(wavFile, 0, SEEK_SET);
+        writeWavHeader(wavFile, outSampleRate, outChannels, 8 * outBytesPerSample, wavDataBytes);
+        std::fclose(wavFile);
+        std::printf("已重采样音频 → audio_out.wav (%u 字节 PCM, S16 %dch %dHz)\n",
+                    wavDataBytes, outChannels, outSampleRate);
     }
 
     std::printf("✅ 播放结束,共显示 %ld 帧\n", decodedFrameCount);
@@ -308,8 +422,10 @@ int main(int argc, char **argv) {
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();
-    sws_freeContext(swsContext);     // 转换器
+    sws_freeContext(swsContext);     // 视频转换器
+    swr_free(&swrContext);           // 音频重采样器(对 nullptr 安全)
     av_freep(&rgbData[0]);           // av_image_alloc 分配的 RGB 缓冲(只 free 第 0 个指针)
+    av_frame_free(&audioFrame);
     av_frame_free(&frame);
     av_packet_free(&packet);
     avcodec_free_context(&audioCodecContext);  // 对 nullptr 安全(没音频时本就是 nullptr)
