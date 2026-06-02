@@ -36,27 +36,6 @@ extern "C" {
 #include <cstdint>
 #include <cstdio>
 
-// 写一个标准 44 字节 WAV 头(PCM)。仅 A2 用来把重采样后的 PCM 落盘验证,A3 接 SDL 播放后删掉。
-// 注意:直接 fwrite 整数 = 小端字节序,x86/arm 都是小端,所以这里直接写没问题(大端机要转)。
-static void writeWavHeader(std::FILE *file, int sampleRate, int channels,
-                           int bitsPerSample, uint32_t dataBytes) {
-    uint32_t byteRate = sampleRate * channels * bitsPerSample / 8;
-    uint16_t blockAlign = channels * bitsPerSample / 8;
-    uint32_t riffSize = 36 + dataBytes;
-    uint32_t fmtChunkSize = 16;
-    uint16_t pcmFormatTag = 1;  // 1 = 未压缩 PCM
-    uint16_t channelCount = (uint16_t)channels;
-    uint16_t bits = (uint16_t)bitsPerSample;
-    uint32_t rate = (uint32_t)sampleRate;
-    std::fwrite("RIFF", 1, 4, file);          std::fwrite(&riffSize, 4, 1, file);
-    std::fwrite("WAVE", 1, 4, file);
-    std::fwrite("fmt ", 1, 4, file);          std::fwrite(&fmtChunkSize, 4, 1, file);
-    std::fwrite(&pcmFormatTag, 2, 1, file);   std::fwrite(&channelCount, 2, 1, file);
-    std::fwrite(&rate, 4, 1, file);           std::fwrite(&byteRate, 4, 1, file);
-    std::fwrite(&blockAlign, 2, 1, file);     std::fwrite(&bits, 2, 1, file);
-    std::fwrite("data", 1, 4, file);          std::fwrite(&dataBytes, 4, 1, file);
-}
-
 // 建解码器并打开——视频③已逐行讲过这四步(find_decoder → alloc_context3 →
 // parameters_to_context → open2)。音频是一模一样的流程,所以抽成函数复用:
 // 第一次(视频③)展开全讲,第二次(音频 A1)就该抽象掉,别复制粘贴。
@@ -170,8 +149,8 @@ int main(int argc, char **argv) {
         std::printf("(没有音频流,只播视频)\n");
     }
 
-    // ===== A2 准备：建音频重采样器(swr)+ 打开 WAV 落盘验证 =====
-    // 解码器吐的音频通常是 fltp(planar float,每声道一个平面),但 SDL/WAV 要的是
+    // ===== A2 准备：建音频重采样器(swr)=====
+    // 解码器吐的音频通常是 fltp(planar float,每声道一个平面),但声卡要的是
     // S16 交错(packed,左右声道样本交替排)。swr 就负责这层转换(采样率/声道/格式)。见 04 §重采样。
     SwrContext *swrContext = nullptr;
     const int outSampleRate = 48000;
@@ -179,8 +158,8 @@ int main(int argc, char **argv) {
     AVChannelLayout outChannelLayout = AV_CHANNEL_LAYOUT_STEREO;  // 统一输出立体声(单声道源会被复制成两声道)
     const int outChannels = outChannelLayout.nb_channels;
     const int outBytesPerSample = av_get_bytes_per_sample(outSampleFormat);
-    std::FILE *wavFile = nullptr;
-    uint32_t wavDataBytes = 0;
+    // A4 要用:每秒音频字节数 = 采样率 × 声道 × 每样本字节,用来把"已播放字节"换算成"已播放秒数"
+    const int audioBytesPerSecond = outSampleRate * outChannels * outBytesPerSample;
     if (audioCodecContext) {
         // 目标参数在前、源参数在后。swr 会把源(fltp/48k/单声道)转成目标(S16/48k/立体声)。
         swr_alloc_set_opts2(&swrContext,
@@ -188,19 +167,35 @@ int main(int argc, char **argv) {
                             &audioCodecContext->ch_layout, audioCodecContext->sample_fmt,
                             audioCodecContext->sample_rate, 0, nullptr);
         swr_init(swrContext);
-        // 先写一个 dataBytes=0 的占位头,边转边追加 PCM,最后再回头把真实大小补上。
-        wavFile = std::fopen("audio_out.wav", "wb");
-        if (wavFile) writeWavHeader(wavFile, outSampleRate, outChannels, 8 * outBytesPerSample, 0);
     }
 
-    // ===== 阶段⑥ 准备：初始化 SDL 视频子系统 =====
+    // ===== 阶段⑥ 准备：初始化 SDL 视频 + 音频子系统 =====
     // 这里只 Init 子系统(不需要宽高);窗口/渲染器/纹理等拿到首帧知道真实尺寸后再懒创建,
     // 和⑤的 SwsContext 一个套路——用 frame 的确凿尺寸,比提前用 codecpar 更稳。
-    if (SDL_Init(SDL_INIT_VIDEO) < 0) {
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) < 0) {
         std::fprintf(stderr, "SDL 初始化失败: %s\n", SDL_GetError());
         avcodec_free_context(&codecContext);
         avformat_close_input(&formatContext);
         return 1;
+    }
+
+    // ===== A3：打开声卡。用 SDL_QueueAudio 方式(不写回调),把 PCM 排队喂进去最简单 =====
+    SDL_AudioDeviceID audioDevice = 0;
+    uint64_t totalQueuedBytes = 0;  // 累计排进声卡的字节数(A4 算音频时钟用)
+    if (audioCodecContext) {
+        SDL_AudioSpec wantedSpec;
+        SDL_zero(wantedSpec);
+        wantedSpec.freq = outSampleRate;
+        wantedSpec.format = AUDIO_S16SYS;    // 对应⑤⑥那种"格式必须对上":S16 + 本机字节序
+        wantedSpec.channels = (Uint8)outChannels;
+        wantedSpec.samples = 1024;           // 声卡每次回调要的样本数(缓冲粒度)
+        wantedSpec.callback = nullptr;       // nullptr = 用 SDL_QueueAudio 推送,不手写回调
+        audioDevice = SDL_OpenAudioDevice(nullptr, 0, &wantedSpec, nullptr, 0);
+        if (audioDevice == 0) {
+            std::fprintf(stderr, "打不开声卡(将静音播放): %s\n", SDL_GetError());
+        } else {
+            SDL_PauseAudioDevice(audioDevice, 0);  // 0 = 取消暂停,开始播放
+        }
     }
 
     // ===== 阶段④：解码循环(send_packet / receive_frame 异步状态机,见 01 §6.4)=====
@@ -222,6 +217,7 @@ int main(int argc, char **argv) {
     }
 
     long decodedFrameCount = 0;
+    long droppedFrameCount = 0;   // A4:落后音频被丢掉、没显示的帧
     bool firstFramePrinted = false;
 
     // ===== 阶段⑤ 的状态：YUV → RGB 转换器 + 目标 RGB 缓冲 =====
@@ -291,12 +287,6 @@ int main(int argc, char **argv) {
                                             frame->width, frame->height);
             }
 
-            // 真正的转换:把 YUV 三平面喂进去,吐出一整块 RGB24。
-            // 第 4/5 个参数 (0, frame->height) 表示"从源的第 0 行起、处理 height 行"(整帧)。
-            sws_scale(swsContext,
-                      frame->data, frame->linesize, 0, frame->height,
-                      rgbData, rgbLinesize);
-
             // --- ⑥ 处理窗口事件:点了关闭按钮就请求退出(否则窗口会"未响应") ---
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
@@ -309,21 +299,40 @@ int main(int argc, char **argv) {
                 break;  // 跳出内层取帧循环;外层也会因为这个标志一起停
             }
 
-            // --- ⑦ 按 pts 控制节奏:算出这帧"该在第几毫秒显示",没到就 SDL_Delay 等一会 ---
-            if (!playbackStarted) {
-                playbackStartTicks = SDL_GetTicks();  // 以第一帧为时间原点
-                playbackStarted = true;
-            }
-            if (frame->pts != AV_NOPTS_VALUE) {
-                double targetMs = frame->pts * timeBaseSeconds * 1000.0;       // 该显示的时刻
-                double elapsedMs = SDL_GetTicks() - playbackStartTicks;       // 已经过去多久
-                if (targetMs > elapsedMs) {
-                    SDL_Delay((Uint32)(targetMs - elapsedMs));                // 太快了,等差值
+            // --- A4/⑦ 同步:有音频就以"音频时钟"为主时钟,视频追它;没音频退回墙钟 ---
+            // 这帧应在第几秒显示(视频时钟)
+            double videoClockSeconds =
+                (frame->pts == AV_NOPTS_VALUE) ? 0.0 : frame->pts * timeBaseSeconds;
+            if (audioDevice != 0) {
+                // 音频时钟 = 声卡"已经播放"的秒数。SDL_GetQueuedAudioSize 返回队列里还没播的字节,
+                // 已排入 - 还没播 = 已播放字节,除以每秒字节数 = 已播放秒数。声卡硬件节奏最准,做主时钟。
+                uint64_t playedBytes = totalQueuedBytes - SDL_GetQueuedAudioSize(audioDevice);
+                double audioClockSeconds = (double)playedBytes / audioBytesPerSecond;
+                double driftSeconds = videoClockSeconds - audioClockSeconds;
+                if (driftSeconds > 0.0) {
+                    SDL_Delay((Uint32)(driftSeconds * 1000.0));  // 视频超前 → 等音频追上
+                } else if (driftSeconds < -0.1) {
+                    // 视频落后音频 > 100ms → 丢掉这帧追同步(在转换/渲染之前丢,省掉无用功)
+                    ++droppedFrameCount;
+                    av_frame_unref(frame);
+                    continue;
+                }
+            } else {
+                // 没音频:退回墙钟节奏(⑦ 原逻辑),以第一帧为时间原点
+                if (!playbackStarted) { playbackStartTicks = SDL_GetTicks(); playbackStarted = true; }
+                if (frame->pts != AV_NOPTS_VALUE) {
+                    double elapsedMs = SDL_GetTicks() - playbackStartTicks;
+                    if (videoClockSeconds * 1000.0 > elapsedMs) {
+                        SDL_Delay((Uint32)(videoClockSeconds * 1000.0 - elapsedMs));
+                    }
                 }
             }
 
-            // --- ⑥ 把这帧 RGB 上传到纹理,清屏、拷贝、呈现 ---
-            // UpdateTexture 的最后一个参数是源数据的行字节数,必须传 rgbLinesize[0](不是 width*3)。
+            // --- ⑤ 转换 + ⑥ 渲染:决定要显示这帧了,才 YUV→RGB 并画上去 ---
+            // sws_scale 第 4/5 个参数 (0, frame->height) = 从源第 0 行起处理 height 行(整帧)。
+            sws_scale(swsContext, frame->data, frame->linesize, 0, frame->height,
+                      rgbData, rgbLinesize);
+            // UpdateTexture 的行字节数必须传 rgbLinesize[0](不是 width*3)。
             SDL_UpdateTexture(texture, nullptr, rgbData[0], rgbLinesize[0]);
             SDL_RenderClear(renderer);
             SDL_RenderCopy(renderer, texture, nullptr, nullptr);
@@ -353,12 +362,12 @@ int main(int argc, char **argv) {
             int convertedSamples = swr_convert(swrContext, &outBuffer, maxOutSamples,
                                                (const uint8_t **)audioFrame->data,
                                                audioFrame->nb_samples);
-            if (convertedSamples > 0 && wavFile) {
+            if (convertedSamples > 0 && audioDevice != 0) {
                 int byteCount = convertedSamples * outChannels * outBytesPerSample;
-                std::fwrite(outBuffer, 1, byteCount, wavFile);
-                wavDataBytes += (uint32_t)byteCount;
+                SDL_QueueAudio(audioDevice, outBuffer, byteCount);  // 排进声卡,后台自动播放
+                totalQueuedBytes += (uint64_t)byteCount;
             }
-            av_freep(&outBuffer);   // 每帧 alloc/free 简单直观;真播放器会复用一块大缓冲(优化留到 A3)
+            av_freep(&outBuffer);   // 每帧 alloc/free 简单直观;真播放器会复用一块大缓冲
             av_frame_unref(audioFrame);
         }
     };
@@ -386,8 +395,8 @@ int main(int argc, char **argv) {
         if (audioCodecContext) {
             avcodec_send_packet(audioCodecContext, nullptr);
             drainAudioFrames();
-            // 再冲刷 swr 内部残留的几个样本(传 NULL 输入),WAV 时长才精确。
-            if (swrContext && wavFile) {
+            // 再冲刷 swr 内部残留的几个样本(传 NULL 输入),排进声卡把尾音播完。
+            if (swrContext && audioDevice != 0) {
                 uint8_t *tailBuffer = nullptr;
                 int tailMax = (int)av_rescale_rnd(
                     swr_get_delay(swrContext, audioCodecContext->sample_rate),
@@ -396,9 +405,7 @@ int main(int argc, char **argv) {
                     av_samples_alloc(&tailBuffer, nullptr, outChannels, tailMax, outSampleFormat, 0);
                     int n = swr_convert(swrContext, &tailBuffer, tailMax, nullptr, 0);
                     if (n > 0) {
-                        int byteCount = n * outChannels * outBytesPerSample;
-                        std::fwrite(tailBuffer, 1, byteCount, wavFile);
-                        wavDataBytes += (uint32_t)byteCount;
+                        SDL_QueueAudio(audioDevice, tailBuffer, n * outChannels * outBytesPerSample);
                     }
                     av_freep(&tailBuffer);
                 }
@@ -406,18 +413,18 @@ int main(int argc, char **argv) {
         }
     }
 
-    // WAV 头当初写的是占位大小,现在回到文件开头补上真实的 dataBytes。
-    if (wavFile) {
-        std::fseek(wavFile, 0, SEEK_SET);
-        writeWavHeader(wavFile, outSampleRate, outChannels, 8 * outBytesPerSample, wavDataBytes);
-        std::fclose(wavFile);
-        std::printf("已重采样音频 → audio_out.wav (%u 字节 PCM, S16 %dch %dHz)\n",
-                    wavDataBytes, outChannels, outSampleRate);
+    // 文件读完不代表声卡播完——队列里可能还排着没播的音频,等它播干净再退出,否则尾音被切掉。
+    if (audioDevice != 0 && !quitRequested) {
+        while (SDL_GetQueuedAudioSize(audioDevice) > 0) {
+            SDL_Delay(10);
+        }
     }
 
-    std::printf("✅ 播放结束,共显示 %ld 帧\n", decodedFrameCount);
+    std::printf("✅ 播放结束,解码 %ld 帧,显示 %ld 帧(丢帧 %ld)\n",
+                decodedFrameCount, decodedFrameCount - droppedFrameCount, droppedFrameCount);
 
     // ===== 清理(初始化建的,退出时 free / close / destroy,见 01 §5.6)=====
+    if (audioDevice != 0) SDL_CloseAudioDevice(audioDevice);
     SDL_DestroyTexture(texture);     // 注意:对 nullptr 调用这些 SDL_Destroy 是安全的(空操作)
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
