@@ -34,10 +34,13 @@
 11 H.264 与 H.265 详解 <- 编解码专题(面试导向),想吃透编码原理就读
    |
    v
-07 硬件编解码         <- 进阶,有 GPU 才学
+07 硬件编解码         <- 进阶,有 GPU 才学 (通用底座 + 平台地图)
    |
    v
-10 移动端硬件编解码    <- 07 的移动端续篇 (Android/iOS),做手机/WebRTC 才学
+10 移动端硬件编解码    <- 07 的移动端续篇 (Android/iOS 总览 + 零拷贝),做手机/WebRTC 才学
+   |
+   v
+13/14/15 平台专题      <- 按需深挖单个平台 (NVIDIA / Android / iOS),面试前重点看
    |
    v
 08 网络协议与流媒体    <- 直播 / RTC 的基础
@@ -46,7 +49,7 @@
 12 RTMP 推流详解       <- 08 推流那一格的深挖,做直播/推流才学
 ```
 
-> 09 是面试题集与自检（贯穿全部主题），10 是 07 的移动端续篇——两者不在主线顺序里，按需读。
+> 09 是面试题集与自检（贯穿全部主题）；10 是 07 的移动端总览，13/14/15 分别是 NVIDIA / Android / iOS 的专题深挖——都不在主线顺序里，按需读。
 
 学习方法上：按导读第 12 节"当前阶段定位"的标尺给自己定位。先把已经懂的章节快速过一遍把零散点串成地图，再针对 ⚠️/❌ 的部分集中突破。
 
@@ -69,6 +72,9 @@
 | [10-移动端硬件编解码.md](./10-移动端硬件编解码.md) | Android MediaCodec（缓冲区队列 / CSD / 颜色格式坑 / Surface 零拷贝）/ iOS VideoToolbox（实时编码 / CVPixelBuffer / AVCC↔Annex-B）/ FFmpeg 两端支持边界 / WebRTC 衔接 | 6.5 / 硬件 |
 | [11-H264与H265详解.md](./11-H264与H265详解.md) | 编解码专题（面试导向）：压缩原理（四种冗余）/ H.264 宏块/帧类型/CAVLC-CABAC / H.265 CTU/SAO/WPP/VPS / 全面对比 / 使用场景与授权 / 坑与误区 / 面试速记 + 常考题 | 3.1 |
 | [12-RTMP推流详解.md](./12-RTMP推流详解.md) | RTMP 推流专题（08 推流深挖）：推流全链路 / 握手 C0-C1-C2 / Chunk 分块 / AMF 命令 connect-createStream-publish / 和 FLV Tag 关系 / ffmpeg-C API 推流实战 / 坑与误区 / 面试常考题 | 3.7 |
+| [13-NVIDIA硬件编解码.md](./13-NVIDIA硬件编解码.md) | NVIDIA 专题（07 深挖，面试导向）：NVENC/NVDEC/CUVID 本质 / 代际能力（AV1 分界、并发 session 限制）/ FFmpeg 集成 / P1-P7 preset 与码控 / CUDA interop / DeepStream / 横向对比 + 面试问答 | 3.6 / 硬件 |
+| [14-Android硬件编解码.md](./14-Android硬件编解码.md) | Android 专题（10 深挖，面试导向）：MediaCodec/AMediaCodec / OMX vs Codec2 / 硬软 codec 区分 / 缓冲区队列 + 生命周期状态机 / CSD / 颜色格式坑 / Surface 零拷贝 / 码控 / FFmpeg 边界 + 面试问答 | 6.5 / 硬件 |
+| [15-iOS硬件编解码.md](./15-iOS硬件编解码.md) | iOS/macOS 专题（10 深挖，面试导向）：VideoToolbox 编解码生命周期 / 核心对象 / 实时编码属性 / AVCC↔Annex-B 字节级 / CVPixelBuffer-Metal 零拷贝 / 软硬选择 / FFmpeg 边界 / WebRTC 衔接 + 面试问答 | 6.5 / 硬件 |
 
 ---
 
@@ -125,6 +131,10 @@
 ### "桌面端（Linux/Windows/macOS）硬件编解码和零拷贝怎么做？"
 
 → [07-硬件编解码.md](./07-硬件编解码.md) §2.5（三大 OS 的 API 地图：VAAPI / D3D11VA / VideoToolbox）+ §五点五（桌面零拷贝与渲染互操作：CUDA-GL / VAAPI-dmabuf / D3D11 / Metal，独显的 PCIe 回读为何更贵）。
+
+### "想系统搞懂某一个平台的硬编硬解（面试要问到 NVIDIA / Android / iOS）？"
+
+→ 单平台深挖专题：[13-NVIDIA硬件编解码.md](./13-NVIDIA硬件编解码.md)（NVENC/NVDEC、代际能力、并发 session、CUDA interop、DeepStream）、[14-Android硬件编解码.md](./14-Android硬件编解码.md)（MediaCodec、OMX vs Codec2、缓冲区状态机、颜色格式坑、Surface 零拷贝、FFmpeg 不能硬编）、[15-iOS硬件编解码.md](./15-iOS硬件编解码.md)（VideoToolbox 生命周期、AVCC↔Annex-B、CVPixelBuffer-Metal、WebRTC 衔接）。每篇都带高频面试问答。
 
 ### "直播延迟为什么这么高？怎么降？"
 
