@@ -1,0 +1,33 @@
+Doc/ffmpeg/README.md
+  12fa7396697e464c 46-48,55,81,143-146
+Doc/ffmpeg/16-硬件编解码高级专题.md
+  12fa7396697e464c 1-371
+Doc/ffmpeg/15-iOS硬件编解码.md
+  12fa7396697e464c 6
+Doc/ffmpeg/13-NVIDIA硬件编解码.md
+  12fa7396697e464c 6
+Doc/ffmpeg/14-Android硬件编解码.md
+  12fa7396697e464c 6
+Doc/ffmpeg/99-学习进度.md
+  12fa7396697e464c 95-98,221
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4-insta360.1",
+  "base_commit_sha": "46d17548c92ae29d29b8e60d08d56f39bc356726",
+  "prompts": {
+    "12fa7396697e464c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "394fae48-d8f4-466f-8513-a890cdd55871",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "dumenglin",
+      "messages": [],
+      "total_additions": 2236,
+      "total_deletions": 1,
+      "accepted_lines": 2566,
+      "overriden_lines": 1
+    }
+  }
+}
