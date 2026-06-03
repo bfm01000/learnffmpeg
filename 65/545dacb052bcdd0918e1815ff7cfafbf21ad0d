@@ -1,0 +1,21 @@
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4-insta360.1",
+  "base_commit_sha": "65545dacb052bcdd0918e1815ff7cfafbf21ad0d",
+  "prompts": {
+    "49378ecf2e4bb586": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e1d76e69-f6e6-4b93-a9e3-ba89e910876c",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "dumenglin",
+      "messages": [],
+      "total_additions": 2705,
+      "total_deletions": 0,
+      "accepted_lines": 3623,
+      "overriden_lines": 2
+    }
+  }
+}
