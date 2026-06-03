@@ -3,6 +3,7 @@
 > 这篇文档是**实战版 SDP 解读**——不是从协议手册抄字段定义，而是从浏览器跑 Google WebRTC codelab step-02 抓出的真实 SDP，**一行一行讲清楚每个字段为什么在这里**。
 >
 > **用法**：
+>
 > - 第一次读：跟着分块讲解理解整体结构
 > - 复习时：直接看"面试金句"和"高频追问"段
 > - 面试前：用"自检题"测自己能不能口述
@@ -36,6 +37,7 @@
 之前在《WebRTC 入门导读》和 M4 文档里，你看到的 SDP 都是**简化示例**——只列了关键字段、省去了一堆 `a=...` 行。但真实生产里的 SDP 一段就 100+ 行，**每个字段都不是装饰**。
 
 读懂一段真实 SDP，你能：
+
 - 一眼看出"双方协商出了什么编码、什么拥塞控制机制、什么抗丢包策略"
 - 面试时面对"解释一下这段 SDP"这道高频题不慌
 - 对接 SFU / TURN / 录制等中间件时知道哪些字段不能乱改
@@ -116,12 +118,13 @@ m=video 9 UDP/TLS/RTP/SAVPF 96 97 103 ...  ← ┐
 c=IN IP4 0.0.0.0                              │
 a=rtcp:9 IN IP4 0.0.0.0                       │
 a=ice-ufrag:bXbl                              │ 【媒体级 media-level】
-... (一大堆 a= 行)                            │  这一路媒体的所有细节
+... (一大堆 a= 行)                             │  这一路媒体的所有细节
 a=rtpmap:96 VP8/90000                         │  每个 m= 一段
 a=ssrc:3696450200 cname:...                ← ┘
 ```
 
 **关键约定**：
+
 - 会话级行（`v` / `o` / `s` / `t` 及之后到第一个 `m=` 之前的 `a=`）对整段会话生效
 - 每个 `m=` 开启一段媒体级，到下一个 `m=` 或文件结束
 - 一段会话**通常有多个 `m=` 段**（音频一个、视频一个、DataChannel 一个）——本样本只有一个 `m=video` 因为 step-02 只协商视频
@@ -169,14 +172,16 @@ m=video 9 UDP/TLS/RTP/SAVPF 96 97 ...
         端口（9 = 占位符，真实端口在 candidate 里）
 ```
 
-**`UDP/TLS/RTP/SAVPF` 是 WebRTC 媒体面的完整传输栈**：
+`**UDP/TLS/RTP/SAVPF` 是 WebRTC 媒体面的完整传输栈**：
 
-| 层 | 角色 |
-|----|------|
-| **UDP** | 底层不可靠传输（《入门导读》解释过为什么用 UDP 不用 TCP）|
-| **TLS** | 即 **DTLS**——基于 UDP 的 TLS，协商加密密钥 |
-| **RTP** | 实时传输协议（你 M4 模块做的）|
+
+| 层         | 角色                                                                              |
+| --------- | ------------------------------------------------------------------------------- |
+| **UDP**   | 底层不可靠传输（《入门导读》解释过为什么用 UDP 不用 TCP）                                               |
+| **TLS**   | 即 **DTLS**——基于 UDP 的 TLS，协商加密密钥                                                 |
+| **RTP**   | 实时传输协议（你 M4 模块做的）                                                               |
 | **SAVPF** | Secure A/V Profile with Feedback。**S=Secure=SRTP 加密**，**F=Feedback=支持 RTCP 反馈** |
+
 
 **面试金句**：这一行就是把"UDP + DTLS + SRTP + RTCP 反馈"四层栈拍扁成一行。
 
@@ -200,13 +205,15 @@ a=rtcp-fb:96 goog-remb     ← REMB 带宽估计（GCC 早期机制）
 
 ### 这 5 行覆盖了你学过的所有抗弱网/拥塞机制
 
-| 字段 | 对应你学过的概念 | 文档位置 |
-|------|---------------|--------|
-| `nack` | NACK 选择性重传 | M4 / M6 / 入门导读 |
-| `nack pli` | 关键帧请求 | M6 `OnKeyFrameRequestNeeded` |
-| `ccm fir` | 关键帧请求（另一种） | M6 文档"关键帧请求"段 |
-| `transport-cc` | 传输级拥塞控制 | 入门导读 GCC/BBR 段 |
-| `goog-remb` | REMB 带宽估计 | 入门导读 GCC 段 |
+
+| 字段             | 对应你学过的概念   | 文档位置                         |
+| -------------- | ---------- | ---------------------------- |
+| `nack`         | NACK 选择性重传 | M4 / M6 / 入门导读               |
+| `nack pli`     | 关键帧请求      | M6 `OnKeyFrameRequestNeeded` |
+| `ccm fir`      | 关键帧请求（另一种） | M6 文档"关键帧请求"段                |
+| `transport-cc` | 传输级拥塞控制    | 入门导读 GCC/BBR 段               |
+| `goog-remb`    | REMB 带宽估计  | 入门导读 GCC 段                   |
+
 
 **双方在协商**："我支持 NACK 重传 / PLI+FIR 关键帧请求 / transport-cc 拥塞反馈"——你 M6 代码里 `consecutiveLossEvents >= 10 → OnKeyFrameRequestNeeded()` 触发后，发的就是 PLI 报文。
 
@@ -222,19 +229,21 @@ a=rtcp-fb:96 goog-remb     ← REMB 带宽估计（GCC 早期机制）
 
 样本里 `a=rtpmap` 列出了浏览器支持的所有编码：
 
-| payload | 编码 | 备注 |
-|---------|------|------|
-| 96 | VP8 | **首选** |
-| 97 | rtx | VP8 的重传流（`apt=96`）|
-| 103 / 107 / 109 / 115 / 117 / 119 / 39 | H264 | 多个 profile 变种（baseline / constrained baseline / main / high）|
-| 104 / 108 / 114 / 116 / 118 / 120 / 40 | rtx | 对应 H264 各 profile 的重传流 |
-| 45 | AV1 | |
-| 46 | rtx | AV1 重传 |
-| 98 / 100 | VP9 | profile-id=0 和 2 |
-| 99 / 101 | rtx | VP9 重传 |
-| 123 | red | RED 冗余编码（FEC 载体）|
-| 124 | rtx | RED 重传 |
-| 125 | ulpfec | **ULP FEC 前向纠错** |
+
+| payload                                | 编码     | 备注                                                           |
+| -------------------------------------- | ------ | ------------------------------------------------------------ |
+| 96                                     | VP8    | **首选**                                                       |
+| 97                                     | rtx    | VP8 的重传流（`apt=96`）                                           |
+| 103 / 107 / 109 / 115 / 117 / 119 / 39 | H264   | 多个 profile 变种（baseline / constrained baseline / main / high） |
+| 104 / 108 / 114 / 116 / 118 / 120 / 40 | rtx    | 对应 H264 各 profile 的重传流                                       |
+| 45                                     | AV1    |                                                              |
+| 46                                     | rtx    | AV1 重传                                                       |
+| 98 / 100                               | VP9    | profile-id=0 和 2                                             |
+| 99 / 101                               | rtx    | VP9 重传                                                       |
+| 123                                    | red    | RED 冗余编码（FEC 载体）                                             |
+| 124                                    | rtx    | RED 重传                                                       |
+| 125                                    | ulpfec | **ULP FEC 前向纠错**                                             |
+
 
 ### 几个关键观察
 
@@ -254,6 +263,7 @@ a=rtcp-fb:96 goog-remb     ← REMB 带宽估计（GCC 早期机制）
 - `level-asymmetry-allowed=1`：双方 level 可以不一样
 
 常见 profile 取值：
+
 - `42` Baseline（兼容性最好，老设备）
 - `4d` Main
 - `64` High（画质好，CPU 重）
@@ -275,6 +285,7 @@ a=setup:actpass                  ← DTLS 角色协商
 DTLS 握手会交换证书。**接收端怎么知道证书没被中间人替换**？答案：**通过 SDP 提前告知的指纹**。
 
 流程：
+
 1. A 在 SDP 里告诉 B："我的证书指纹是 36:E5:..."
 2. SDP 通过**业务信令通道**（WebSocket / HTTPS，本身已加密）传给 B
 3. DTLS 握手时 B 收到 A 的真实证书，**算指纹和 SDP 里的对比**——一致才信任
@@ -285,11 +296,13 @@ DTLS 握手会交换证书。**接收端怎么知道证书没被中间人替换*
 
 DTLS 是 client-server 模型，但 WebRTC 两端是对等的——谁当 client？靠 `setup` 协商：
 
-| offer 端 | answer 端 | 含义 |
-|---------|---------|------|
-| `actpass` | `active` | offer 端无所谓，answer 端主动当 client 发起 DTLS 握手 |
-| `actpass` | `passive` | offer 端当 client（少见）|
-| `active` | `passive` | 显式指定 |
+
+| offer 端   | answer 端  | 含义                                       |
+| --------- | --------- | ---------------------------------------- |
+| `actpass` | `active`  | offer 端无所谓，answer 端主动当 client 发起 DTLS 握手 |
+| `actpass` | `passive` | offer 端当 client（少见）                      |
+| `active`  | `passive` | 显式指定                                     |
+
 
 **实践中几乎都是 `offer:actpass / answer:active`**——这意味着真正发起 DTLS 握手的是 **answer 端**。
 
@@ -307,11 +320,11 @@ a=ssrc:2399172641 msid:... ...
 
 ### 解读
 
-- **`a=ssrc`** 声明这一路媒体用到的 SSRC（流标识，你 M4 学的 32 位字段）
+- `**a=ssrc**` 声明这一路媒体用到的 SSRC（流标识，你 M4 学的 32 位字段）
 - 这里出现 **两个 SSRC**——为什么？
   - `3696450200` = 主视频流（VP8 / H264 等数据）
   - `2399172641` = **RTX 重传流**（NACK 触发的重传走这条独立 SSRC）
-- **`a=ssrc-group:FID 3696450200 2399172641`** = 把这两个 SSRC 标记为"主流 + 重传流"配对（FID = Flow ID）
+- `**a=ssrc-group:FID 3696450200 2399172641`** = 把这两个 SSRC 标记为"主流 + 重传流"配对（FID = Flow ID）
 
 ### 这里印证了你 M4 学的什么
 
@@ -344,13 +357,15 @@ RTP 头 12 字节装不下所有信息，需要**扩展头**（RFC 8285）。`a=
 
 ### 几个关键扩展
 
-| 扩展名 | 作用 | 谁用 |
-|--------|------|------|
-| `abs-send-time` | 发送端绝对时间戳 | GCC 拥塞控制估带宽 |
-| `transport-wide-cc` | 传输级 transport-cc 序号 | transport-cc 拥塞控制（你导读学的）|
-| `toffset` | 时间戳偏移 | 抗抖估计 |
-| `playout-delay` | 期望渲染延迟 | 端到端延迟控制 |
-| `sdes:mid` | media-id | BUNDLE 分流 |
+
+| 扩展名                 | 作用                  | 谁用                       |
+| ------------------- | ------------------- | ------------------------ |
+| `abs-send-time`     | 发送端绝对时间戳            | GCC 拥塞控制估带宽              |
+| `transport-wide-cc` | 传输级 transport-cc 序号 | transport-cc 拥塞控制（你导读学的） |
+| `toffset`           | 时间戳偏移               | 抗抖估计                     |
+| `playout-delay`     | 期望渲染延迟              | 端到端延迟控制                  |
+| `sdes:mid`          | media-id            | BUNDLE 分流                |
+
 
 ### 印证你 M4 学的什么
 
@@ -365,6 +380,7 @@ M4 文档里提过："扩展头里有 abs-send-time、transport-cc seq"——**�
 ### 为什么 answer 是 recvonly
 
 step-02 的 JS 代码：
+
 ```js
 localPeerConnection.addStream(localStream);
 // remotePeerConnection 没有 addStream!
@@ -372,21 +388,25 @@ localPeerConnection.addStream(localStream);
 
 只有 local（offer 方）加了摄像头流，remote（answer 方）没加。所以协商结果是：
 
-| 端 | 方向 | 含义 |
-|----|------|------|
-| Offer (local) | `sendrecv` | 我能发流、也愿意收 |
-| Answer (remote) | `recvonly` | 我只收，没流可发 |
+
+| 端               | 方向         | 含义        |
+| --------------- | ---------- | --------- |
+| Offer (local)   | `sendrecv` | 我能发流、也愿意收 |
+| Answer (remote) | `recvonly` | 我只收，没流可发  |
+
 
 **最终数据单向**：local → remote（你看到右边画面，但右边画面没回传到左边）。
 
 ### 4 种方向值
 
-| 值 | 含义 |
-|----|------|
-| `sendrecv` | 双向收发 |
-| `sendonly` | 只发不收 |
-| `recvonly` | 只收不发 |
-| `inactive` | 暂停（保留协商但不流）|
+
+| 值          | 含义          |
+| ---------- | ----------- |
+| `sendrecv` | 双向收发        |
+| `sendonly` | 只发不收        |
+| `recvonly` | 只收不发        |
+| `inactive` | 暂停（保留协商但不流） |
+
 
 ---
 
@@ -413,11 +433,13 @@ candidate:<foundation> <component> <protocol> <priority> <IP> <port> typ <type> 
 
 ### 三种 candidate 类型
 
-| typ | 含义 | 何时用 |
-|-----|------|------|
-| `host` | 本机直接地址 | 局域网直连 |
-| `srflx` | STUN 反射地址（公网映射）| NAT 穿透 |
-| `relay` | TURN 中继地址 | 实在打不通时兜底 |
+
+| typ     | 含义              | 何时用      |
+| ------- | --------------- | -------- |
+| `host`  | 本机直接地址          | 局域网直连    |
+| `srflx` | STUN 反射地址（公网映射） | NAT 穿透   |
+| `relay` | TURN 中继地址       | 实在打不通时兜底 |
+
 
 step-02 因为两个 PeerConnection 在同一台机器，host candidate 直接通——**根本没用上 STUN/TURN**。
 
@@ -427,9 +449,9 @@ step-02 因为两个 PeerConnection 在同一台机器，host candidate 直接�
 
 > "SDP 分**会话级**和**媒体级**两层。`m=` 行的传输是 `UDP/TLS/RTP/SAVPF`——UDP 上跑 DTLS 加密的 RTP，SAVPF 表示支持 RTCP 反馈。**payload 列表第一个是首选编码**（不能只看局部 fmtp 行下结论）。
 >
-> 每个编码下的 **`rtcp-fb`** 声明支持的反馈机制：`nack` 重传 / `nack pli` 和 `ccm fir` 关键帧请求 / `transport-cc` 拥塞控制 / `goog-remb` 带宽估计。
+> 每个编码下的 `**rtcp-fb`** 声明支持的反馈机制：`nack` 重传 / `nack pli` 和 `ccm fir` 关键帧请求 / `transport-cc` 拥塞控制 / `goog-remb` 带宽估计。
 >
-> **`a=fingerprint`** 是 DTLS 证书指纹（防中间人替换证书），**`a=ice-ufrag/pwd`** 是 ICE 连通性检查的鉴权凭证。**`a=ssrc-group:FID`** 把主流和 RTX 重传流配对——印证了 NACK 重传走独立 SSRC 的设计。
+> `**a=fingerprint**` 是 DTLS 证书指纹（防中间人替换证书），`**a=ice-ufrag/pwd**` 是 ICE 连通性检查的鉴权凭证。`**a=ssrc-group:FID**` 把主流和 RTX 重传流配对——印证了 NACK 重传走独立 SSRC 的设计。
 >
 > Offer 通常 `sendrecv`，Answer 视实际方向可能是 `recvonly`。ICE candidate 有 `host / srflx / relay` 三种，按 priority 和 network-cost 选最优路径。"
 
@@ -447,11 +469,12 @@ step-02 因为两个 PeerConnection 在同一台机器，host candidate 直接�
 
 ### Q3. `setup:actpass` 和 `setup:active` 的差异？谁先发 DTLS ClientHello？
 
-**答**：DTLS 是 client-server 模型，必须明确角色。Offer 端通常给 `actpass` 表示"我都行"；Answer 端必须给 `active` 或 `passive` 明确角色——**`active` 的一端主动发 ClientHello**。WebRTC 实践中几乎都是 `offer:actpass / answer:active`，所以**真正发起 DTLS 握手的是 answer 端**。
+**答**：DTLS 是 client-server 模型，必须明确角色。Offer 端通常给 `actpass` 表示"我都行"；Answer 端必须给 `active` 或 `passive` 明确角色——`**active` 的一端主动发 ClientHello**。WebRTC 实践中几乎都是 `offer:actpass / answer:active`，所以**真正发起 DTLS 握手的是 answer 端**。
 
 ### Q4. 一个 NALU 被分成多个 RTP 包传输（FU-A），接收端怎么从 SDP 知道发送端支持 FU-A？
 
-**答**：看 H264 的 `a=fmtp:N` 里的 **`packetization-mode`** 字段：
+**答**：看 H264 的 `a=fmtp:N` 里的 `**packetization-mode`** 字段：
+
 - `packetization-mode=0` → 只支持 Single NALU 模式（小 NALU）
 - `packetization-mode=1` → 支持 Single NALU / STAP-A / FU-A 三种（**你 M4 代码里写的 `kNonInterleaved`**）
 
@@ -459,7 +482,7 @@ step-02 因为两个 PeerConnection 在同一台机器，host candidate 直接�
 
 ### Q5. 接收端怎么从 SDP 知道哪个 SSRC 是重传流？
 
-**答**：通过 **`a=ssrc-group:FID <主SSRC> <重传SSRC>`** 显式声明。两个 SSRC 同 cname 但角色不同，主流的 payload 是 96/103/...，重传流的 payload 是 97/104/...，重传 payload 通过 `a=fmtp:N apt=M` 指向对应主 payload。**接收端解 NACK 重传包时**：① 看到 SSRC 是 RTX SSRC；② 从 SDP 知道它对应哪条主流；③ 还原后塞回主流的 Jitter Buffer。
+**答**：通过 `**a=ssrc-group:FID <主SSRC> <重传SSRC>`** 显式声明。两个 SSRC 同 cname 但角色不同，主流的 payload 是 96/103/...，重传流的 payload 是 97/104/...，重传 payload 通过 `a=fmtp:N apt=M` 指向对应主 payload。**接收端解 NACK 重传包时**：① 看到 SSRC 是 RTX SSRC；② 从 SDP 知道它对应哪条主流；③ 还原后塞回主流的 Jitter Buffer。
 
 ---
 

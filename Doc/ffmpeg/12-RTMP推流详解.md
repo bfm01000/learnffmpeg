@@ -35,7 +35,7 @@
 
 > 嗯，RTMP 是跑在 TCP 上的，所以**第一步是建 TCP 连接**。连上之后它有一套**自己的应用层握手**，叫 C0/C1/C2，双方互发随机数再回显一下，确认通道通了、时钟基准对齐了。
 >
-> 握手完之后进入**命令交互**：先发 `connect`，告诉服务器"我要连哪个 app"；再发 `createStream`，申请一条消息流，服务器回一个 stream id 给我；然后发 `publish`，带上推流码（streamKey），意思是"我要往这条流里推东西了"；服务器回个 `onStatus` 说准备好了。
+> 握手完之后进入**命令交互**：先发 `connect`，告诉服务器"我要连哪个 app"；再发 `createStream`，申请一条消息流，服务器回一个 **message stream id** 给我；然后发 `publish`，带上推流码（streamKey），意思是"我要往这条流里推东西了"；服务器回个 `onStatus` 说准备好了。
 >
 > 接下来**真正发数据之前**，要先发三样：`onMetaData`（宽高、码率、编码这些元信息），然后是**视频的 sequence header**（也就是 avcC，里面是 SPS/PPS），还有**音频的 sequence header**（AudioSpecificConfig）。这一步特别关键，先发参数集，**不然拉流端解不出来会黑屏**。
 >
@@ -133,13 +133,15 @@
 
 ## 六、推流完整链路（端到端走一遍）
 
-| 环节 | 做什么 | 看哪篇 |
-|---|---|---|
-| ① 采集 | 摄像头出 YUV、麦克风出 PCM | [02](./02-像素格式与内存布局.md) / [04](./04-音频PCM-采样-重采样.md) |
-| ② 编码 | YUV→H.264、PCM→AAC；直播要低延迟（无 B 帧 + zerolatency + CBR + 短 GOP） | [06](./06-编码参数与码控.md) / [11](./11-H264与H265详解.md) |
-| ③ 打包 | 把编码数据封成 **FLV Tag 体**（视频 AVCC、首帧 avcC；音频 AAC + AudioSpecificConfig） | [05](./05-H264-MP4-NALU.md) §5.5 |
-| ④ 建连 | RTMP 握手 → connect → createStream → publish | 本篇 §七 |
-| ⑤ 分块发送 | 把消息切成 Chunk，按时间戳交织音视频，发给服务器 | 本篇 §7.2 |
+
+| 环节     | 做什么                                                                 | 看哪篇                                                  |
+| ------ | ------------------------------------------------------------------- | ---------------------------------------------------- |
+| ① 采集   | 摄像头出 YUV、麦克风出 PCM                                                   | [02](./02-像素格式与内存布局.md) / [04](./04-音频PCM-采样-重采样.md) |
+| ② 编码   | YUV→H.264、PCM→AAC；直播要低延迟（无 B 帧 + zerolatency + CBR + 短 GOP）         | [06](./06-编码参数与码控.md) / [11](./11-H264与H265详解.md)    |
+| ③ 打包   | 把编码数据封成 **FLV Tag 体**（视频 AVCC、首帧 avcC；音频 AAC + AudioSpecificConfig） | [05](./05-H264-MP4-NALU.md) §5.5                     |
+| ④ 建连   | RTMP 握手 → connect → createStream → publish                          | 本篇 §七                                                |
+| ⑤ 分块发送 | 把消息切成 Chunk，按时间戳交织音视频，发给服务器                                         | 本篇 §7.2                                              |
+
 
 直播编码的关键约束（和点播不同）：**必须低延迟**——无 B 帧（否则 PTS≠DTS 引入重排序延迟）、`tune=zerolatency`、CBR 稳定码率、短 GOP（1-2 秒一个关键帧，方便观众随时切入）。详见 [06](./06-编码参数与码控.md) §6.3。
 
@@ -172,19 +174,25 @@ RTMP 不直接发整条消息，而是把每条 Message **切成一个个 Chunk*
 2. **避免大消息阻塞小消息**：一帧关键帧可能几十 KB，切成小块后，急的小消息（如音频）能插空发。
 3. **头部压缩**：Chunk header 有 4 种格式（fmt 0/1/2/3）——同一路流连续的块，时间戳/长度/类型大多不变，后续块用更短的 header（fmt 3 几乎无头），省带宽。
 
+> **最关键的一句话：`chunk stream = 一组 chunk 的编号`。**
+>
+> `chunk` 是碎片，`message` 是完整消息，`chunk stream` 就是这些碎片的分组编号。接收端看到相同的 `csid`，就知道这些 chunk 该归到同一组上下文里，后续可以拼回完整 message，并复用前一次的 header 信息。
+
 **Chunk Stream ID（CSID）**：标识这个块属于哪条"块流"，是多路复用的依据（音频、视频、控制各用不同 CSID）。
 
 ### 7.3 Message 类型
 
 RTMP 传的消息分几类（按 message type id）：
 
-| 类别 | 例子 | 作用 |
-|---|---|---|
-| **协议控制消息** | Set Chunk Size(1)、Ack(3)、Window Ack Size(5)、Set Peer Bandwidth(6) | 调协议参数、流控 |
-| **命令消息（AMF）** | connect / createStream / publish / play | 建连、控制流（见 §7.5） |
-| **数据消息（AMF）** | `@setDataFrame` onMetaData | 元信息（宽高、码率、编码） |
-| **音频消息(8)** | AAC 数据 | 音频帧 |
-| **视频消息(9)** | H.264 数据 | 视频帧 |
+
+| 类别            | 例子                                                                | 作用             |
+| ------------- | ----------------------------------------------------------------- | -------------- |
+| **协议控制消息**    | Set Chunk Size(1)、Ack(3)、Window Ack Size(5)、Set Peer Bandwidth(6) | 调协议参数、流控       |
+| **命令消息（AMF）** | connect / createStream / publish / play                           | 建连、控制流（见 §7.5） |
+| **数据消息（AMF）** | `@setDataFrame` onMetaData                                        | 元信息（宽高、码率、编码）  |
+| **音频消息(8)**   | AAC 数据                                                            | 音频帧            |
+| **视频消息(9)**   | H.264 数据                                                          | 视频帧            |
+
 
 ### 7.4 AMF：命令和元数据的编码格式
 
@@ -199,7 +207,7 @@ RTMP 传的消息分几类（按 message type id）：
   │ ── connect("app名") ───────────►   │  声明要连哪个应用
   │ ◄──────────── _result ──────────   │  (含 Window Ack/Set Peer BW)
   │ ── createStream ───────────────►   │  申请一条消息流
-  │ ◄──────────── _result(streamId)─   │  返回 stream id
+  │ ◄────── _result(messageStreamId)─  │  返回 message stream id
   │ ── publish("streamKey","live") ─►  │  声明"我要推这一路"
   │ ◄────── onStatus(Publish.Start) ─  │  服务器准备好接收
   │ ── @setDataFrame(onMetaData) ───►   │  推元信息(宽高/码率/编码)
@@ -217,6 +225,7 @@ RTMP 传的消息分几类（按 message type id）：
 > 约定：下文 `XX` 都是十六进制；带省略号的随机/载荷部分用 `…` 表示。SPS/PPS 的具体字节是示例值，实际由编码器决定。
 
 #### A. 握手字节（C0/C1/C2）
+
 ```
 客户端                          服务器
   │ ── C0 + C1 ──────────────►  │   C0: 1 字节版本(=3)
@@ -225,6 +234,7 @@ RTMP 传的消息分几类（按 message type id）：
   │ ── C2 ───────────────────►  │   C2 = 回显 S1
   │      握手完成,开始通信       │
 ```
+
 ```
 C0:  03
      └─ 1 字节版本号，固定 3
@@ -245,8 +255,27 @@ C1:  00 00 00 00   00 00 00 00   AB 12 7F … (共 1528 字节随机)
 ```
 ┌──────────────┬─────────────────┬───────────────────┬───────────┐
 │ Basic Header │ Message Header  │ Extended Timestamp│ Chunk Data│
-│  (1~3 字节)  │ (0/3/7/11 字节) │  (0 或 4 字节)    │  (载荷)   │
+│  (1~3 字节)   │ (0/3/7/11 字节) │  (0 或 4 字节)     │  (载荷)    │
 └──────────────┴─────────────────┴───────────────────┴───────────┘
+```
+
+把 `Message Header` 展开后，更容易看清 `message type id` 在哪里：
+
+```text
+RTMP Chunk
+┌──────────────┬─────────────────────────────────────────────┬───────────────────┬────────────┐
+│ Basic Header │ Message Header                              │ Extended Timestamp│ Chunk Data │
+│              │ timestamp / message length / message type id│                   │ message 的  │
+│ fmt + csid   │ message stream id                           │                   │ 一段 payload│
+└──────────────┴─────────────────────────────────────────────┴───────────────────┴────────────┘
+```
+
+所以要分清两层：
+
+```text
+Chunk Header 负责：这块属于哪条 chunk stream、怎么把块拼回 message。
+Message Header 负责：这条 message 是音频、视频、命令还是 metadata。
+Chunk Data 负责：真正的 FLV VideoTag / AudioTag / AMF0 数据。
 ```
 
 **① Basic Header（这里 1 字节）**：高 2 位是 `fmt`，低 6 位是 `csid`。
@@ -257,18 +286,72 @@ C1:  00 00 00 00   00 00 00 00   AB 12 7F … (共 1528 字节随机)
 ```
 
 - csid 在 2~63 → 1 字节搞定；csid=0 → 再补 1 字节（csid = 第二字节 + 64）；csid=1 → 再补 2 字节。
-- 例：视频用 csid=6、fmt=0 → `00` 拼 `000110` = **`0x06`**。
+- 例：视频用 csid=6、fmt=0 → `00` 拼 `000110` = `**0x06**`。
 
 **② Message Header 按 fmt 四种长度**：
 
-| fmt | 长度 | 字段 | 用在哪 |
-|---|---|---|---|
-| 0 | 11B | timestamp(3) + length(3) + type id(1) + **message stream id(4，小端!)** | 一路流的第一个块 / 时间戳回绕 |
-| 1 | 7B | timestamp delta(3) + length(3) + type id(1) | 同流，长度变了 |
-| 2 | 3B | timestamp delta(3) | 同流，长度也没变 |
-| 3 | 0B | 无 | 全沿用上一块（含续块） |
+
+| fmt | 长度  | 字段                                                                   | 用在哪              |
+| --- | --- | -------------------------------------------------------------------- | ---------------- |
+| 0   | 11B | timestamp(3) + length(3) + type id(1) + **message stream id(4，小端!)** | 一路流的第一个块 / 时间戳回绕 |
+| 1   | 7B  | timestamp delta(3) + length(3) + type id(1)                          | 同流，长度变了          |
+| 2   | 3B  | timestamp delta(3)                                                   | 同流，长度也没变         |
+| 3   | 0B  | 无                                                                    | 全沿用上一块（含续块）      |
+
 
 > ⚠️ **面试细节**：除了 message stream id 是**小端（little-endian）**，其余多字节字段都是**大端**。这是 RTMP 里唯一一个小端字段，很爱考。
+
+这里还有一个容易漏掉的点：`**message type id` 只在 `fmt=0` 和 `fmt=1` 的 Message Header 里出现**。
+
+```text
+fmt=0：带完整 message 信息，包含 message type id 和 message stream id。
+fmt=1：复用同一条 message stream id，但会带新的 message length 和 message type id。
+fmt=2：只带 timestamp delta，不带 message type id。
+fmt=3：连 Message Header 都没有，完全复用前面的上下文。
+```
+
+为什么 `fmt=2/3` 不带 `message type id` 也能解析？因为接收端会按 `csid` 保存这条 chunk stream 上一次的 message 上下文。后续块只要 `csid` 相同，就能复用之前的 `message type id`、message length、message stream id 等信息。
+
+同理，`**message stream id` 只有 `fmt=0` 的完整 Message Header 里才出现**：
+
+```text
+csid：
+  在 Basic Header 里，每个 chunk 都有。
+  用来找这组 chunk 的上下文。
+
+message stream id：
+  在 Message Header 里，但只有 fmt=0 才携带。
+  fmt=1/2/3 都通过 csid 找上下文，复用之前的 message stream id。
+```
+
+所以不要把 `csid` 和 `message stream id` 混成一个东西：
+
+```text
+csid = chunk 层的分组编号，用来拼 chunk、复用 header。
+message stream id = RTMP message 层的业务流编号，表示这条消息属于哪一路 publish/play 流。
+```
+
+例如一条很大的视频 message 被拆成多个 chunk：
+
+```text
+第 1 个 chunk：fmt=0，csid=6，message type id=9，声明这是视频消息。
+第 2 个 chunk：fmt=3，csid=6，没有 message header，沿用前面的 type id=9。
+第 3 个 chunk：fmt=3，csid=6，继续沿用，直到 message length 收满。
+```
+
+也就是说：**chunk 是传输分片，message 才是业务语义。`message type id` 属于 message 这一层，不是每个 chunk 都重复携带。**
+
+常见 `message type id`：
+
+
+| type id | 含义                   | 常见内容                                                    |
+| ------- | -------------------- | ------------------------------------------------------- |
+| 1       | Set Chunk Size       | 协商 chunk 大小                                             |
+| 8       | Audio Message        | FLV AudioTag body，例如 AAC sequence header / AAC raw      |
+| 9       | Video Message        | FLV VideoTag body，例如 H.264 sequence header / H.264 NALU |
+| 18      | AMF0 Data Message    | `@setDataFrame` / `onMetaData`                          |
+| 20      | AMF0 Command Message | `connect` / `createStream` / `publish`                  |
+
 
 **③ Extended Timestamp**：当 timestamp（或 delta）字段写满 `FF FF FF` 时，真实时间戳放到这 4 个额外字节里。
 
@@ -283,20 +366,55 @@ C1:  00 00 00 00   00 00 00 00   AB 12 7F … (共 1528 字节随机)
 [51 字节 body] ← 见 D 段
 ```
 
-逐字节读完，服务器就知道："这是流 1 上的一条 51 字节的视频消息，时间戳 0。" 然后开始读 body。
+逐字节读完，服务器就知道："这是 **message stream id = 1** 上的一条 51 字节的视频消息，时间戳 0。" 然后开始读 body。
+
+接收端继续看 body，才能知道这条视频消息到底是 sequence header 还是普通视频帧：
+
+```text
+RTMP Message Header:
+  message type id = 9
+  只能说明这是一条视频消息
+
+Chunk Data / Message Payload:
+  FLV VideoTag body
+  第 1 字节看 CodecID
+  第 2 字节看 AVCPacketType
+```
+
+对应关系：
+
+```text
+message type id = 18
+  -> AMF0 Data Message
+  -> payload 里解析 @setDataFrame / onMetaData
+
+message type id = 9
+  -> Video Message
+  -> CodecID=7 表示 H.264/AVC
+  -> AVCPacketType=0 表示视频 sequence header，payload 是 avcC
+  -> AVCPacketType=1 表示普通 H.264 NALU 数据
+
+message type id = 8
+  -> Audio Message
+  -> SoundFormat=10 表示 AAC
+  -> AACPacketType=0 表示音频 sequence header，payload 是 AudioSpecificConfig
+  -> AACPacketType=1 表示普通 AAC raw data
+```
 
 #### C. connect 命令的 AMF0 字节
 
 命令消息是 type id 20（`0x14`），载荷用 AMF0 编码。AMF0 常用类型标记：
 
-| 标记 | 类型 | 编码 |
-|---|---|---|
-| `00` | Number | 8 字节 IEEE754 双精度（大端） |
-| `01` | Boolean | 1 字节 |
-| `02` | String | 2 字节长度 + UTF8 |
-| `03` | Object | 一串 `键(裸String) 值`，以 `00 00 09` 结尾 |
-| `05` | Null | 无 |
-| `09` | Object End | 配合 `00 00` 收尾 |
+
+| 标记   | 类型         | 编码                                |
+| ---- | ---------- | --------------------------------- |
+| `00` | Number     | 8 字节 IEEE754 双精度（大端）              |
+| `01` | Boolean    | 1 字节                              |
+| `02` | String     | 2 字节长度 + UTF8                     |
+| `03` | Object     | 一串 `键(裸String) 值`，以 `00 00 09` 结尾 |
+| `05` | Null       | 无                                 |
+| `09` | Object End | 配合 `00 00` 收尾                     |
+
 
 `connect` 命令载荷逐字节：
 
@@ -400,7 +518,7 @@ C6  [后 128 字节 body]                         ← 第 2 块：续块
 4.  connect 命令(type 20, AMF0)       ── §C
 5.  收 _result + Window Ack + Set Peer BW
 6.  createStream(type 20)
-7.  收 _result(streamId=1)
+7.  收 _result(message stream id=1)
 8.  publish("streamKey","live")(type 20)
 9.  收 onStatus(NetStream.Publish.Start)
 10. onMetaData(type 18, @setDataFrame)
@@ -441,8 +559,8 @@ ffmpeg -re -i input.mp4 \
     -f flv rtmp://live.example.com/app/streamKey
 ```
 
-- **`-f flv`**：RTMP 推流的封装格式就是 **flv**（因为 RTMP 内部是 FLV Tag）。
-- **`-re`**：按原速读，直播链路必加（实时采集源不需要，它本来就是实时的）。
+- `**-f flv**`：RTMP 推流的封装格式就是 **flv**（因为 RTMP 内部是 FLV Tag）。
+- `**-re`**：按原速读，直播链路必加（实时采集源不需要，它本来就是实时的）。
 - 码控参数对应 [06](./06-编码参数与码控.md) §6.3 的直播组合。
 
 ### 9.2 C API（avformat 路线，主流）
@@ -476,7 +594,7 @@ avformat_free_context(outputCtx);
 
 要点：
 
-- 输出格式写 **`"flv"`**，URL 给 `rtmp://`——FFmpeg 自动走 RTMP 协议并完成握手/connect/publish，你不用手撸协议。
+- 输出格式写 `**"flv"**`，URL 给 `rtmp://`——FFmpeg 自动走 RTMP 协议并完成握手/connect/publish，你不用手撸协议。
 - **flv muxer 会自动把 H.264 转成 AVCC、生成 sequence header**，但前提是你的视频流 `codecpar->extradata` 里有正确的 avcC（从解码/编码侧拿）。
 - **时间戳**：`av_interleaved_write_frame` 按 DTS 自动交织音视频；DTS 必须单调递增、用输出流的 `time_base`，否则花屏/卡顿（见 §十一）。
 
@@ -497,17 +615,19 @@ avformat_free_context(outputCtx);
 
 ## 十一、常见坑与误区（必看）
 
-| 症状 / 误区 | 根因 | 怎么修 |
-|---|---|---|
-| 推流端口连不上 | 1935 偏门端口被企业/校园防火墙封 | 换 RTMPS(443) 或在能出网的环境推 |
-| 文件推流瞬间结束/服务器卡死 | 忘了 `-re`，FFmpeg 以最快速度把整个文件推完 | 文件源加 `-re` 按原速推 |
-| 拉流端**黑屏但有声音 / 首帧花屏** | 没先发**视频 sequence header(avcC/SPS/PPS)** | publish 后先发 sequence header 再发数据帧 |
-| 画面花屏、忽快忽慢、音画不同步 | **时间戳(DTS)不单调或没对齐**、音视频没按时间戳交织 | DTS 单调 + 用输出 time_base + `av_interleaved_write_frame` |
-| 误以为 RTMP 视频是 Annex-B | RTMP/FLV 用 **AVCC 长度前缀**，不是起始码 | 从 Annex-B 源推流要先转 AVCC（见 [05](./05-H264-MP4-NALU.md) §四） |
-| 音频推上去拉流端解不出 | RTMP/FLV 的 AAC 是**裸帧**，误带了 ADTS 头 | 推流前剥掉 ADTS 头（见 §7.6 F 段） |
-| 推了 B 帧导致延迟高/兼容差 | 直播不该用 B 帧（PTS≠DTS 引入重排序延迟） | 编码端无 B 帧 + zerolatency（[06](./06-编码参数与码控.md)） |
-| 码率忽高忽低冲垮带宽 | 用了 CRF/VBR 导致瞬时码率尖峰 | 直播用 CBR + maxrate + bufsize（[06](./06-编码参数与码控.md) §6.3 VBV） |
-| 推 H.265 拉流端放不出 | RTMP/FLV 对 HEVC 支持是非标扩展，很多服务器/播放器不认 | H.265 直播优先走别的容器/协议，或确认全链路支持 |
+
+| 症状 / 误区              | 根因                                      | 怎么修                                                         |
+| -------------------- | --------------------------------------- | ----------------------------------------------------------- |
+| 推流端口连不上              | 1935 偏门端口被企业/校园防火墙封                     | 换 RTMPS(443) 或在能出网的环境推                                      |
+| 文件推流瞬间结束/服务器卡死       | 忘了 `-re`，FFmpeg 以最快速度把整个文件推完            | 文件源加 `-re` 按原速推                                             |
+| 拉流端**黑屏但有声音 / 首帧花屏** | 没先发**视频 sequence header(avcC/SPS/PPS)** | publish 后先发 sequence header 再发数据帧                           |
+| 画面花屏、忽快忽慢、音画不同步      | **时间戳(DTS)不单调或没对齐**、音视频没按时间戳交织          | DTS 单调 + 用输出 time_base + `av_interleaved_write_frame`       |
+| 误以为 RTMP 视频是 Annex-B | RTMP/FLV 用 **AVCC 长度前缀**，不是起始码          | 从 Annex-B 源推流要先转 AVCC（见 [05](./05-H264-MP4-NALU.md) §四）     |
+| 音频推上去拉流端解不出          | RTMP/FLV 的 AAC 是**裸帧**，误带了 ADTS 头       | 推流前剥掉 ADTS 头（见 §7.6 F 段）                                    |
+| 推了 B 帧导致延迟高/兼容差      | 直播不该用 B 帧（PTS≠DTS 引入重排序延迟）              | 编码端无 B 帧 + zerolatency（[06](./06-编码参数与码控.md)）               |
+| 码率忽高忽低冲垮带宽           | 用了 CRF/VBR 导致瞬时码率尖峰                     | 直播用 CBR + maxrate + bufsize（[06](./06-编码参数与码控.md) §6.3 VBV） |
+| 推 H.265 拉流端放不出       | RTMP/FLV 对 HEVC 支持是非标扩展，很多服务器/播放器不认     | H.265 直播优先走别的容器/协议，或确认全链路支持                                 |
+
 
 ---
 
@@ -524,31 +644,23 @@ avformat_free_context(outputCtx);
 > 完整口语化话术见开头 §二，这里只列张嘴时要命中的关键词。
 
 - **Q：讲一下 RTMP 推流的完整流程。**
-  TCP 连接 → RTMP 握手(C0/C1/C2) → connect 连应用 → createStream 拿 stream id → publish 声明推流 → 先发 onMetaData + 音视频 sequence header(avcC/AudioSpecificConfig) → 按时间戳交织发音视频数据消息。
-
+TCP 连接 → RTMP 握手(C0/C1/C2) → connect 连应用 → createStream 拿 message stream id → publish 声明推流 → 先发 onMetaData + 音视频 sequence header(avcC/AudioSpecificConfig) → 按时间戳交织发音视频数据消息。
 - **Q：RTMP 为什么要分 Chunk？**
-  一条 TCP 连接上多路复用音频/视频/控制；把大消息切小避免堵死小消息；Chunk header 有 4 种格式做头部压缩省带宽。
-
+一条 TCP 连接上多路复用音频/视频/控制；把大消息切小避免堵死小消息；Chunk header 有 4 种格式做头部压缩省带宽。
 - **Q：RTMP 和 FLV 什么关系？**
-  RTMP 的音视频消息体≈FLV Tag 的 body（类型/时间戳挪到了 RTMP message header）。所以 RTMP 转 HTTP-FLV 几乎零成本——换壳不换肉。
-
+RTMP 的音视频消息体≈FLV Tag 的 body（类型/时间戳挪到了 RTMP message header）。所以 RTMP 转 HTTP-FLV 几乎零成本——换壳不换肉。
 - **Q：RTMP 里视频是 Annex-B 还是 AVCC？**
-  **AVCC（长度前缀）**，SPS/PPS 在第一帧的 sequence header(avcC) 里——和裸流/RTP 的 Annex-B 起始码不同。
-
+**AVCC（长度前缀）**，SPS/PPS 在第一帧的 sequence header(avcC) 里——和裸流/RTP 的 Annex-B 起始码不同。
 - **Q：为什么 RTMP 延迟比 HLS 低？**
-  RTMP 长连接、来帧即发、无切片缓冲；HLS 要把流切成 `.ts` 小文件、播放器还要攒几个切片才起播。
-
+RTMP 长连接、来帧即发、无切片缓冲；HLS 要把流切成 `.ts` 小文件、播放器还要攒几个切片才起播。
 - **Q：为什么浏览器不能直接播 RTMP？怎么办？**
-  RTMP 依赖已停用的 Flash。观众端改用 HTTP-FLV（flv.js 解析喂 `<video>`）或 HLS。
-
+RTMP 依赖已停用的 Flash。观众端改用 HTTP-FLV（flv.js 解析喂 `<video>`）或 HLS。
 - **Q：推流黑屏/花屏怎么排查？**
-  先看有没有发 sequence header（黑屏常因没发 avcC）；再看时间戳是否单调、音视频是否按 DTS 交织；再看是否误用 Annex-B / B 帧。
-
+先看有没有发 sequence header（黑屏常因没发 avcC）；再看时间戳是否单调、音视频是否按 DTS 交织；再看是否误用 Annex-B / B 帧。
 - **Q：RTMP vs SRT vs WebRTC 推流？**
-  RTMP：TCP、生态最成熟、1-3s、推流事实标准；SRT：可靠 UDP、抗丢包、几百 ms-1s、适合弱网回传；WebRTC：UDP+RTP、几百 ms、互动级但要 ICE/SFU，重。
-
+RTMP：TCP、生态最成熟、1-3s、推流事实标准；SRT：可靠 UDP、抗丢包、几百 ms-1s、适合弱网回传；WebRTC：UDP+RTP、几百 ms、互动级但要 ICE/SFU，重。
 - **Q：Chunk header 里哪个字段是小端？**
-  只有 **message stream id（4 字节）是小端**，其余多字节字段都是大端（见 §7.6 B 段）。
+只有 **message stream id（4 字节）是小端**，其余多字节字段都是大端（见 §7.6 B 段）。
 
 ---
 
@@ -577,3 +689,4 @@ avformat_free_context(outputCtx);
 - 拉流端黑屏但有声音，最可能是哪一步出了问题？
 - 为什么 RTMP 延迟比 HLS 低、却又被认为"该被淘汰"？现在推流端为什么还在用它？
 - RTMP / SRT / WebRTC 推流各自的延迟量级和适用场景？
+
