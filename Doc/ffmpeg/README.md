@@ -43,13 +43,16 @@
 13/14/15 平台专题      <- 按需深挖单个平台 (NVIDIA / Android / iOS),面试前重点看
    |
    v
+16 硬件编解码高级专题   <- 13/14/15 横向进阶 (LTR/SVC/VMAF/延迟/容量/DRM),冲高级岗必读
+   |
+   v
 08 网络协议与流媒体    <- 直播 / RTC 的基础
    |
    v
 12 RTMP 推流详解       <- 08 推流那一格的深挖,做直播/推流才学
 ```
 
-> 09 是面试题集与自检（贯穿全部主题）；10 是 07 的移动端总览，13/14/15 分别是 NVIDIA / Android / iOS 的专题深挖——都不在主线顺序里，按需读。
+> 09 是面试题集与自检（贯穿全部主题）；10 是 07 的移动端总览，13/14/15 分别是 NVIDIA / Android / iOS 的专题深挖，16 是它们的跨平台高级进阶——都不在主线顺序里，按需读。
 
 学习方法上：按导读第 12 节"当前阶段定位"的标尺给自己定位。先把已经懂的章节快速过一遍把零散点串成地图，再针对 ⚠️/❌ 的部分集中突破。
 
@@ -75,6 +78,7 @@
 | [13-NVIDIA硬件编解码.md](./13-NVIDIA硬件编解码.md) | NVIDIA 专题（07 深挖，面试导向）：NVENC/NVDEC/CUVID 本质 / 代际能力（AV1 分界、并发 session 限制）/ FFmpeg 集成 / P1-P7 preset 与码控 / CUDA interop / DeepStream / 横向对比 + 面试问答 | 3.6 / 硬件 |
 | [14-Android硬件编解码.md](./14-Android硬件编解码.md) | Android 专题（10 深挖，面试导向）：MediaCodec/AMediaCodec / OMX vs Codec2 / 硬软 codec 区分 / 缓冲区队列 + 生命周期状态机 / CSD / 颜色格式坑 / Surface 零拷贝 / 码控 / FFmpeg 边界 + 面试问答 | 6.5 / 硬件 |
 | [15-iOS硬件编解码.md](./15-iOS硬件编解码.md) | iOS/macOS 专题（10 深挖，面试导向）：VideoToolbox 编解码生命周期 / 核心对象 / 实时编码属性 / AVCC↔Annex-B 字节级 / CVPixelBuffer-Metal 零拷贝 / 软硬选择 / FFmpeg 边界 / WebRTC 衔接 + 面试问答 | 6.5 / 硬件 |
+| [16-硬件编解码高级专题.md](./16-硬件编解码高级专题.md) | 跨平台高级专题（13/14/15 横向进阶，**冲高级岗**）：LTR 长期参考帧 / Intra-Refresh-GDR / 时域分层 SVC + Simulcast / VMAF-BD-rate 质量评估 / glass-to-glass 延迟拆解 / 吞吐与容量规划 / 安全解码 DRM-Widevine L1 / 错误恢复 + 面试问答 | 硬件 |
 
 ---
 
@@ -135,6 +139,10 @@
 ### "想系统搞懂某一个平台的硬编硬解（面试要问到 NVIDIA / Android / iOS）？"
 
 → 单平台深挖专题：[13-NVIDIA硬件编解码.md](./13-NVIDIA硬件编解码.md)（NVENC/NVDEC、代际能力、并发 session、CUDA interop、DeepStream）、[14-Android硬件编解码.md](./14-Android硬件编解码.md)（MediaCodec、OMX vs Codec2、缓冲区状态机、颜色格式坑、Surface 零拷贝、FFmpeg 不能硬编）、[15-iOS硬件编解码.md](./15-iOS硬件编解码.md)（VideoToolbox 生命周期、AVCC↔Annex-B、CVPixelBuffer-Metal、WebRTC 衔接）。每篇都带高频面试问答。
+
+### "硬件编解码的高级面试题（弱网恢复 / 多人会议编码 / 怎么证明画质 / 一台机器跑多少路 / 付费内容为啥不能截图）？"
+
+→ [16-硬件编解码高级专题.md](./16-硬件编解码高级专题.md)：LTR 长期参考帧、Intra-Refresh/GDR、时域分层 SVC + Simulcast、VMAF/BD-rate 质量评估、glass-to-glass 延迟拆解、吞吐与容量规划、安全解码（Widevine L1/L3）、错误恢复——13/14/15 的跨平台进阶，冲高级岗必读。
 
 ### "直播延迟为什么这么高？怎么降？"
 

@@ -3,6 +3,7 @@
 > 这是 [10-移动端硬件编解码.md](./10-移动端硬件编解码.md) 的 **Android 专题深挖篇**。10 是移动端总览（Android + iOS 一篇讲完），本篇把 Android 这一侧拆开、讲透、做成面试导向——目标是读完能应对面试里关于 Android 硬编硬解的绝大部分问题。
 > 本篇覆盖：MediaCodec 在 Android 媒体栈里的位置、OMX → Codec2 演进、硬件 codec vs 软件 codec 怎么区分与选择、Java `MediaCodec` vs NDK `AMediaCodec`、缓冲区队列模型与生命周期状态机、CSD（SPS/PPS）、颜色格式坑、Surface 零拷贝、编码参数与运行时控制、FFmpeg 在 Android 的支持边界、和 iOS / NVENC 的横向对比、Android 特有陷阱、面试高频问答、学习路径。
 > 前置：先读 [07-硬件编解码.md](./07-硬件编解码.md) 建立"硬件帧 vs 软件帧"的核心直觉；本篇频繁引用 [05-H264-MP4-NALU.md](./05-H264-MP4-NALU.md) 的 Annex-B / SPS/PPS、[02-像素格式与内存布局.md](./02-像素格式与内存布局.md) 的 NV12 / stride、[06-编码参数与码控.md](./06-编码参数与码控.md) 的 GOP / CBR / 低延迟。**零拷贝底层原理（UMA 为何仍慢、dma-buf/gralloc/fence）在 [10 §四点五](./10-移动端硬件编解码.md#四点五ios-与-android-的零拷贝核心考点) 已讲透，本篇只做 Android 编解码这一侧的用法，不重复底层。**
+> **进阶**：弱网恢复（LTR / Intra-Refresh）、一对多分发（Simulcast / SVC）、画质量化（VMAF / BD-rate）、容量规划、安全解码（Widevine L1）等**跨平台高级考点**在 [16-硬件编解码高级专题.md](./16-硬件编解码高级专题.md)——冲高级岗必读。
 
 ---
 
