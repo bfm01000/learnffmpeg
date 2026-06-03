@@ -6,6 +6,48 @@
 
 ---
 
+## 〇、面试速答模板（口语化，开口就能用）
+
+> 先放这一节给临场用——"张嘴就能说"的完整话术，练顺嘴。文末 §十二 是同样问题的要点版，正文各节是展开。两套配合：这里练话，那里背深度。
+
+**Q：VideoToolbox 和 AVFoundation 什么区别？什么时候用哪个？**
+
+> 它俩是**不同层级**的东西。AVFoundation 是高层、省心、黑盒——录文件用 AVAssetWriter、播放用 AVPlayer、采集用 AVCaptureSession，但你拿不到也控不了压缩后的比特流。VideoToolbox 是中层，直接控编解码——能逐帧拿到压缩的 `CMSampleBuffer`，能控低延迟、码率、关键帧。所以判断标准很简单：**只是想录个文件、播个视频，用 AVFoundation；要自己控比特流做实时推流、RTC、低延迟那套，用 VideoToolbox。** 底下都是同一块苹果 Media Engine 硬件。
+
+**Q：VideoToolbox 编码吐出来是什么格式？推流为什么要转？怎么转？**
+
+> 吐出来是 **AVCC**——每个 NALU 前面是 4 字节长度前缀，而且 **SPS/PPS 不在数据里，单独放在 `CMVideoFormatDescription` 里**。但 RTP、裸流要的是 **Annex-B**——`00 00 00 01` 起始码分隔，SPS/PPS 作为 NALU 内联在流里。所以 iOS 推流必做两件事：① 把每个 NALU 前的 4 字节长度**换成起始码**；② 从 format description 里用 `CMVideoFormatDescriptionGetH264ParameterSetAtIndex` **取出 SPS/PPS，在每个关键帧前手动插进去**。漏了的典型症状是对端**只有声音没画面**，或者首帧之后全花屏。
+
+**Q：为什么实时编码要关掉 B 帧？**
+
+> 因为 B 帧是双向预测、要参考后面的帧才能解，这就引入了**重排序延迟**——编码器得先等未来那几帧到了才能编当前帧。视频通话、直播这种场景延迟比压缩率重要得多，所以必须关。在 VideoToolbox 里就是把 `AllowFrameReordering` 设成 false，再把 `RealTime` 设成 true。这俩等价于 x264 里的 `-tune zerolatency` 那套"干掉所有要等未来帧的手段"。
+
+**Q：CVPixelBuffer 和 IOSurface 是什么关系？怎么零拷贝给 Metal？**
+
+> `CVPixelBuffer` 的后端就是 **IOSurface**——内核管理的、引用计数的、能跨进程共享的图形内存。一块 IOSurface 可以同时被相机 ISP 写、被 VideoToolbox 读、被 Metal 当纹理采样，全程一份内存。零拷贝给 Metal 的做法是用 `CVMetalTextureCache`，把 NV12 的两个平面分别 alias 成两张 `MTLTexture`（亮度平面是 r8、色度平面是 rg8），然后在 shader 里做 YUV→RGB。整个过程数据不下 CPU。要注意建 pixel buffer pool 时得带上 IOSurface 和 Metal compatibility 那两个 key，漏了就退化成普通内存、零拷贝失效。
+
+**Q：怎么强制硬件编码、动态改码率、强制关键帧？**
+
+> 强制硬件：创建会话时在 encoder specification 里传 `RequireHardwareAcceleratedVideoEncoder = true`。动态改码率：运行时 `VTSessionSetProperty` 改 `AverageBitRate`。强制关键帧：在编码**那一帧**时传一个 frame property `kVTEncodeFrameOptionKey_ForceKeyFrame = true`。后两个就是 WebRTC 在 iOS 上做拥塞控制降码率、和收到 PLI 后丢包恢复的实际旋钮——跟 Android 的 setParameters 一一对应。
+
+**Q：iOS 和 Android 的比特流格式为什么相反？**
+
+> VideoToolbox 吐 AVCC（长度前缀、参数集分离），MediaCodec 吃和吐都是 Annex-B（起始码、参数集内联）。没有谁对谁错，就是两家平台的设计选择不同。但后果很实际：**同一套跨平台代码，在两端的比特流处理逻辑正好是反的**——iOS 要把 AVCC 转 Annex-B 才能推 RTP，Android 本来就是 Annex-B 不用转。这是写跨平台音视频最容易翻车的点之一。
+
+**Q：为什么大家都说 iOS 比 Android 省心？**
+
+> 两个原因。第一，**芯片统一**——苹果就自家那套 Media Engine，行为一致，没有 Android 那种高通、联发科、三星各家行为不一、颜色格式五花八门、私有 tiled 格式的碎片化噩梦。第二，**FFmpeg 支持对称**——iOS 上 `h264_videotoolbox` 编码解码 wrapper 都有，而 Android 只有解码 wrapper、硬编必须绕开 FFmpeg 直接调系统 API。所以同样做硬编解，iOS 的坑明显少一截。
+
+**Q：SPS/PPS 在 iOS 里存在哪？**
+
+> 不在数据帧里。编码吐出的 `CMSampleBuffer` 只有压缩的画面数据，**SPS/PPS 单独存在 `CMVideoFormatDescription` 里**。要发流就得用 `CMVideoFormatDescriptionGetH264ParameterSetAtIndex` 把它们取出来手动注入（HEVC 还多一个 VPS，要取三个）。这其实跟 MP4 的 `avcC`、Android 的 csd 是同一个设计思想——**参数集和画面数据分开存**。
+
+**Q：VideoToolbox 编码是同步还是异步？收尾要注意什么？**
+
+> 异步。`VTCompressionSessionEncodeFrame` 调用返回，**不代表这帧编完了**，编码结果是通过你创建会话时注册的输出回调交还给你的。所以收尾时必须调 `VTCompressionSessionCompleteFrames` 做一次 flush，把流水线里还没吐出来的帧都逼出来，否则结尾几帧会丢。
+
+---
+
 ## 一、VideoToolbox 在 Apple 媒体栈的位置
 
 学 VideoToolbox 之前，先搞清楚它在 Apple 这套媒体框架里**站在哪一层**——这决定了"什么时候该用它、什么时候不该用"。

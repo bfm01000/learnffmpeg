@@ -6,6 +6,48 @@
 
 ---
 
+## 〇、面试速答模板（口语化，开口就能用）
+
+> 先放这一节给临场用——"张嘴就能说"的完整话术，练顺嘴。文末 §十三 是同样问题的要点速记版，正文各节是展开。两套配合：这里练话，那里背词。
+
+**Q：先讲讲 MediaCodec 到底是什么？硬解软解怎么区分？**
+
+> MediaCodec 是 Android 给 App 的**统一编解码门面**——你永远调它这一个类，但它自己不干活，只是把请求转交给底下一个具体的 codec 组件。这个组件可能是 SoC 里的硬件编解码单元，也可能是跑在 CPU 上的软件实现，**同一套 API、同一套缓冲区模型，硬解软解长得一模一样**。这跟桌面不一样——桌面你显式选 `h264_nvenc`（硬）还是 `libx264`（软），Android 是看你**选了哪个组件名**：`OMX.google.*` / `c2.android.*` 是软件，`OMX.qcom.*` / `c2.qti.*` / `OMX.MTK.*` 这种厂商前缀是硬件。API 29 以上还能直接用 `isHardwareAccelerated()` 判断。
+
+**Q：MediaCodec 的缓冲区模型是怎么工作的？同步还是异步？**
+
+> 心智模型就是**两条缓冲区队列**：你从输入队列要一个空 buffer、填数据、还回去；硬件处理完，你从输出队列拿处理好的 buffer、用完再还回去。驱动方式有两种：同步模式自己拿 timeout 轮询 dequeue，好理解但容易写出忙等；异步模式 `setCallback` 注册回调，buffer 可用时系统通知你，没有忙等、更适合生产环境——但 setCallback 必须在 configure 之前调。**有一条铁律**：output buffer 用完必须 `releaseOutputBuffer` 还回去，因为 buffer 总数固定、在两条队列间轮转，你拿了不还，池子很快耗尽，编解码就卡死了——跟 AVFrame 引用计数是同一个"借了要还"的道理。
+
+**Q：OMX 和 Codec2 是什么？为什么 Android 10 要换？**
+
+> 这是门面**底下接硬件那一层**的换代。Android 9 及以前用 OMX，是从 Khronos 沿用下来的老标准，它的 buffer 模型跟 Android 图形栈（gralloc / dma-buf）衔接得很别扭、厂商扩展又乱、早期还跑在 mediaserver 进程里一崩全崩。Android 10 引入的 Codec2 是 Google 自己重写的，**原生围绕 dma-buf 设计、零拷贝衔接顺、跑在独立沙箱进程里崩了也不拖垮系统**。对 App 是透明的——`MediaCodec` 这个门面 API 没变，只是组件名前缀从 `OMX.*` 变成了 `c2.*`。
+
+**Q：Android 解码花屏，最常见是什么原因？**
+
+> 十有八九是 **ByteBuffer 模式下的颜色格式 / stride 坑**。问题有两层：第一，输出的 YUV 颜色格式因芯片而异，有 I420、有 NV12、还有厂商私有的 tiled 排布，你拿 NV12 的方式去读 tiled 的数据，直接马赛克；第二，就算格式对了，**每行还有对齐填充，stride 和 slice-height 不等于 width 和 height**，你按 width 紧凑拷贝必然错位花屏。正确做法是用 `Image`（NDK 是 `AImage`）按 `rowStride` / `pixelStride` 一行行读。但**最省事的是压根别用 ByteBuffer——能用 Surface 输出就用 Surface**，把颜色格式的烂摊子整个甩给系统。
+
+**Q：Surface 模式为什么能零拷贝？**
+
+> 因为数据**全程不下到 CPU**。解码时 configure 传一个 Surface 进去，`releaseOutputBuffer(idx, true)` 第二个参数给 true，解码结果直接渲染到 Surface；要做后处理就接 SurfaceTexture，变成 OpenGL 的一张 OES 外部纹理。编码方向用 `createInputSurface()` 拿一个输入 Surface，让相机或 GL 渲染的画面直接把 GPU 纹理喂给编码器，省掉 YUV 回读 CPU 那一大笔开销。底层是 BufferQueue + gralloc/dma-buf + fence 那套（细节在 10 §4.5）。这也是移动端高性能采集编码的标准姿势。
+
+**Q：SPS/PPS 怎么喂给解码器？**
+
+> Android 这边叫 **CSD（Codec-Specific Data）**，通过 MediaFormat 的 csd key 喂：H.264 是 csd-0 放 SPS、csd-1 放 PPS；HEVC 是 csd-0 把 VPS+SPS+PPS 拼一块。如果你用 MediaExtractor 拆 MP4，trackFormat 里已经带好 csd 了，直接 configure 就行。编码方向反过来——编码器产出的第一个 buffer 会带 `BUFFER_FLAG_CODEC_CONFIG` 标志，那就是 CSD，要单独存好，别当普通画面帧写进流里。
+
+**Q：Android 的比特流是 Annex-B 还是 AVCC？和 iOS 有什么区别？**
+
+> Android MediaCodec 喂入和吐出**都是 Annex-B**，也就是带 `00 00 00 01` 起始码、SPS/PPS 作为普通 NALU 内联在流里。**iOS 的 VideoToolbox 正好相反，是 AVCC**——长度前缀，而且 SPS/PPS 单独存在 format description 里。所以一个很现实的坑：Android 推 RTP 基本不用转（本来就是 Annex-B），但 iOS 推流必须做 AVCC→Annex-B 转换。写跨平台代码时两端的比特流处理逻辑正好相反，最容易翻车。
+
+**Q：FFmpeg 在 Android 上能硬件编码吗？**
+
+> **不能。** FFmpeg 在 Android 只有 MediaCodec 的**解码** wrapper（`h264_mediacodec` 这些），**没有编码 wrapper**。所以 Android 想硬编只有两条路：要么绕过 FFmpeg 直接调 MediaCodec / AMediaCodec（主流做法），要么用 FFmpeg 软编 libx264——但手机软编功耗发热扛不住，只能离线用。现实架构是**混合**的：FFmpeg 干它擅长的封装、协议、音频重采样，视频硬编解直接调系统 API。
+
+**Q：编码器跑起来之后还能动态改码率、强制关键帧吗？**
+
+> 能，而且这正是 WebRTC 在手机上必须用的两个旋钮。动态降码率用 `setParameters` + `PARAMETER_KEY_VIDEO_BITRATE`，对应拥塞控制（GCC）发现网络变差了要降码率；强制立即产一个 IDR 用 `PARAMETER_KEY_REQUEST_SYNC_FRAME`，对应对端发来 PLI/FIR 说"我花屏了，给我个关键帧"。没有这俩，WebRTC 在弱网下既不能自适应、也没法快速从花屏恢复。
+
+---
+
 ## 一、MediaCodec 在 Android 媒体栈里的位置
 
 学 Android 硬编解的第一件事不是背 API，而是先建立一张"我调的这个 `MediaCodec`，底下到底是谁在干活"的地图。否则后面所有的"为什么回退软解""为什么换台手机就花屏"都无从下手。
