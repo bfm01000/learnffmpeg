@@ -37,7 +37,7 @@
 
 **Q：为什么大家都说 iOS 比 Android 省心？**
 
-> 两个原因。第一，**芯片统一**——苹果就自家那套 Media Engine，行为一致，没有 Android 那种高通、联发科、三星各家行为不一、颜色格式五花八门、私有 tiled 格式的碎片化噩梦。第二，**FFmpeg 支持对称**——iOS 上 `h264_videotoolbox` 编码解码 wrapper 都有，而 Android 只有解码 wrapper、硬编必须绕开 FFmpeg 直接调系统 API。所以同样做硬编解，iOS 的坑明显少一截。
+> 两个原因。第一，**芯片统一**——苹果就自家那套 Media Engine，行为一致，没有 Android 那种高通、联发科、三星各家行为不一、颜色格式五花八门、私有 tiled 格式的碎片化噩梦。第二，**FFmpeg 支持更顺**——iOS 上编码用 `h264_videotoolbox`、解码走 `-hwaccel videotoolbox`，都成熟好用；Android 虽然 FFmpeg 6.0 起也有了 `h264_mediacodec` 编码器，但能力受限、有设备/API 限制，生产里硬编基本还是绕开 FFmpeg 直调系统 API。所以同样做硬编解，iOS 的坑明显少一截。
 
 **Q：SPS/PPS 在 iOS 里存在哪？**
 
@@ -358,7 +358,7 @@ CMVideoFormatDescriptionGetH264ParameterSetAtIndex(fmt, 0, &sps, &spsSize, &spsC
 // index 1 取 PPS; 每个前面拼 00 00 00 01 写入输出流
 
 // 2. 取压缩数据, 遍历每个 NALU: 读 4 字节大端长度 → 替换成起始码
-CMBlockBufferRef block = CMSampleBufferGetDataBlock(sampleBuffer);
+CMBlockBufferRef block = CMSampleBufferGetDataBuffer(sampleBuffer);
 uint8_t *data; size_t totalLen;
 CMBlockBufferGetDataPointer(block, 0, NULL, &totalLen, (char **)&data);
 size_t offset = 0;
@@ -439,12 +439,12 @@ VT **默认就走硬件**（Media Engine），但你可以通过创建会话时�
 
 ## 九、FFmpeg 支持边界（iOS 最省心处）
 
-iOS/macOS 在 FFmpeg 里是**编 + 解都有 wrapper**，这和 Android"只有解码 wrapper、没有编码 wrapper"形成鲜明对比（[10 §五](./10-移动端硬件编解码.md)）：
+iOS/macOS 在 FFmpeg 里**编、解都能走 VideoToolbox**——但两者形态不同，这是个易错点：**解码是 hwaccel**（`-hwaccel videotoolbox` + 普通 h264 解码器，没有叫 `h264_videotoolbox` 的解码器），**编码才是命名编码器**（`h264_videotoolbox` / `hevc_videotoolbox`）。对比 Android 见 [10 §五](./10-移动端硬件编解码.md)：
 
 | | 解码 | 编码 |
 |---|---|---|
-| **iOS / macOS** | ✅ `h264_videotoolbox` / `hevc_videotoolbox` | ✅ `h264_videotoolbox` / `hevc_videotoolbox` |
-| **Android** | ✅ `h264_mediacodec` 等 | ❌ 无 MediaCodec 编码 wrapper |
+| **iOS / macOS** | ✅ hwaccel：`-hwaccel videotoolbox`（无命名解码器） | ✅ 编码器 `h264_videotoolbox` / `hevc_videotoolbox` |
+| **Android** | ✅ 解码器 `h264_mediacodec` 等 | ⚠️ 有 `h264_mediacodec` 编码器（FFmpeg 6.0+）但能力受限，生产多直调系统 API |
 
 ```bash
 # macOS 上用 VideoToolbox 硬解硬编 (M 系跑 4K 飞快、几乎不耗电)
@@ -469,7 +469,7 @@ ffmpeg -hwaccel videotoolbox -i input.mp4 -c:v h264_videotoolbox -b:v 4M out.mp4
 | API 风格 | C / CoreFoundation（现代、统一） | Java / NDK（`AMediaCodec`），缓冲区队列模型 |
 | 强制关键帧 | frame property `ForceKeyFrame` | `setParameters` + `REQUEST_SYNC_FRAME` |
 
-一句话记忆：**iOS 统一省心 + AVCC + CVPixelBuffer + FFmpeg 双向；Android 碎片化 + Annex-B + Surface/ByteBuffer + FFmpeg 只解不编。比特流格式两端正好相反——这是跨平台最容易翻车的点（§十一陷阱表）。**
+一句话记忆：**iOS 统一省心 + AVCC + CVPixelBuffer + FFmpeg 编解都顺；Android 碎片化 + Annex-B + Surface/ByteBuffer + FFmpeg 编码器虽有（6.0+）但受限、生产仍多直调系统 API。比特流格式两端正好相反——这是跨平台最容易翻车的点（§十一陷阱表）。**
 
 ### 10.2 VideoToolbox vs 桌面 NVENC
 
@@ -524,7 +524,7 @@ ffmpeg -hwaccel videotoolbox -i input.mp4 -c:v h264_videotoolbox -b:v 4M out.mp4
   VT 吐 AVCC（长度前缀，参数集分离），MediaCodec 吃/吐 Annex-B（起始码，参数集内联）。所以**同一套跨平台代码在两端的比特流处理逻辑正好相反**，是最容易翻车的点（§十）。
 
 - **Q：为什么 iOS 比 Android 省心？**
-  ① 芯片统一——苹果自家 Media Engine，行为一致，没有 Android 那种厂商碎片化/颜色格式坑；② FFmpeg 在 iOS 编解码 wrapper 都有，Android 只有解码 wrapper（硬编必须绕开 FFmpeg 直接调系统 API，§九）。
+  ① 芯片统一——苹果自家 Media Engine，行为一致，没有 Android 那种厂商碎片化/颜色格式坑；② FFmpeg 支持更顺——iOS 编码 `h264_videotoolbox`、解码 `-hwaccel videotoolbox` 都成熟，Android 虽有 `h264_mediacodec` 编码器（6.0+）但受限、生产硬编多直调系统 API（§九）。
 
 - **Q：SPS/PPS 在 iOS 存哪？**
   编码吐出的 `CMSampleBuffer` 里**不带** SPS/PPS——它们单独存在 `CMVideoFormatDescription` 里。要发流得用 `CMVideoFormatDescriptionGetH264ParameterSetAtIndex` 取出来手动注入（HEVC 还多个 VPS）。这和 MP4 的 `avcC`、Android 的 csd 是同一设计思想（[05 §6](./05-H264-MP4-NALU.md)）。

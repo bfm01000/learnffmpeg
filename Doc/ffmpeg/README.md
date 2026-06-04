@@ -126,7 +126,7 @@
 
 ### "FFmpeg 在 Android 上能硬件编码吗？"
 
-→ [10-移动端硬件编解码.md](./10-移动端硬件编解码.md) 第五章：不能，没有 MediaCodec 编码 wrapper，得直接调系统 API。
+→ [10-移动端硬件编解码.md](./10-移动端硬件编解码.md) 第五章：FFmpeg 6.0+ 虽有 `h264_mediacodec` 编码器但能力受限，生产里 Android 硬编基本还是直调系统 API（MediaCodec/AMediaCodec）。
 
 ### "移动端零拷贝怎么做？iOS 和 Android 有什么区别？"
 

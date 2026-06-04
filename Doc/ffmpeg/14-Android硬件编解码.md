@@ -41,7 +41,7 @@
 
 **Q：FFmpeg 在 Android 上能硬件编码吗？**
 
-> **不能。** FFmpeg 在 Android 只有 MediaCodec 的**解码** wrapper（`h264_mediacodec` 这些），**没有编码 wrapper**。所以 Android 想硬编只有两条路：要么绕过 FFmpeg 直接调 MediaCodec / AMediaCodec（主流做法），要么用 FFmpeg 软编 libx264——但手机软编功耗发热扛不住，只能离线用。现实架构是**混合**的：FFmpeg 干它擅长的封装、协议、音频重采样，视频硬编解直接调系统 API。
+> **基本不能指望。** 严格说，FFmpeg 6.0（2023）起加入了 `h264_mediacodec` / `hevc_mediacodec` **编码器**，但它出现晚、能力和可控性都很有限（API level 限制、低版本设备输出异常、参数远不如直调灵活），**生产环境的 Android 硬编基本还是绕过 FFmpeg 直接调 MediaCodec / AMediaCodec**（主流做法）。退一步用 FFmpeg 软编 libx264，功耗发热又扛不住，只能离线用。现实架构是**混合**的：FFmpeg 干它擅长的封装、协议、音频重采样，视频硬编解直接调系统 API。
 
 **Q：编码器跑起来之后还能动态改码率、强制关键帧吗？**
 
@@ -568,12 +568,12 @@ codec.setParameters(requestKeyFrame);
 
 ## 十、FFmpeg 在 Android 的支持边界（关键,最易踩空）
 
-"FFmpeg 跨平台,硬件加速应该也跨"——**Android 上这个想当然会浪费大量时间**。Android 的 FFmpeg 硬件支持是**严重不对称**的(见 [10 §五](./10-移动端硬件编解码.md)):
+"FFmpeg 跨平台,硬件加速应该也跨"——**Android 上这个想当然会浪费大量时间**。Android 的 FFmpeg 硬件支持**很不对称**:解码成熟好用,编码虽然 6.0 起有了 wrapper 但很弱、生产基本不用(见 [10 §五](./10-移动端硬件编解码.md)):
 
 | | 解码 | 编码 |
 |---|---|---|
-| **Android** | ✅ `h264_mediacodec` / `hevc_mediacodec` / `vp8_mediacodec` / `vp9_mediacodec` / `av1_mediacodec` | ❌ **FFmpeg 没有 MediaCodec 编码 wrapper** |
-| (对比 iOS) | ✅ `h264_videotoolbox` / `hevc_videotoolbox` | ✅ `h264_videotoolbox` / `hevc_videotoolbox` |
+| **Android** | ✅ `h264_mediacodec` / `hevc_mediacodec` / `vp8_mediacodec` / `vp9_mediacodec` / `av1_mediacodec` | ⚠️ `h264_mediacodec` / `hevc_mediacodec` 编码器(**FFmpeg 6.0+**)存在但能力受限、有设备/API 限制,生产多直调系统 API |
+| (对比 iOS) | ✅ hwaccel `-hwaccel videotoolbox` | ✅ 编码器 `h264_videotoolbox` / `hevc_videotoolbox`(成熟) |
 
 ### 10.1 解码:能用,但有前提
 
@@ -581,11 +581,11 @@ codec.setParameters(requestKeyFrame);
 - 运行时要正确建 **`AVMediaCodecContext`** 并**关联一个 Surface**(`av_mediacodec_alloc_context` + `av_mediacodec_default_init` 绑 `ANativeWindow`/Surface),否则可能回落软解或拿不到硬件帧。
 - 解码输出的硬件帧形态是 `AV_PIX_FMT_MEDIACODEC`(对应 §八的 Surface),要 CPU 像素得 `av_hwframe_transfer_data` 下载(就破坏零拷贝了,见 [07 §四](./07-硬件编解码.md))。
 
-### 10.2 编码:没有 wrapper,只有两条路
+### 10.2 编码:有 wrapper 但很弱,生产几乎都直调系统 API
 
-Android 硬编,FFmpeg 帮不上:
+FFmpeg 6.0 起有了 `h264_mediacodec` / `hevc_mediacodec` 编码器,但**别指望它**:能力和可控性远不及直调(参数有限、API level 限制、低版本设备输出异常)。Android 硬编实务两条路:
 
-1. **绕过 FFmpeg,直接调 MediaCodec / AMediaCodec**——**主流做法**,本篇第五~九章那套。
+1. **直接调 MediaCodec / AMediaCodec**——**主流做法**,本篇第五~九章那套,可控性最强。
 2. 用 FFmpeg 软编 `libx264`——**功耗/发热不可接受**(见 [10 §一](./10-移动端硬件编解码.md)),仅限离线/低分辨率/不在乎电量的场景。
 
 ### 10.3 现实架构:混合
@@ -595,7 +595,7 @@ Android 硬编,FFmpeg 帮不上:
    系统 API 负责: 视频硬编(MediaCodec) / 视频硬解(MediaCodec 或 ffmpeg h264_mediacodec)
 ```
 
-> **结论:Android 上"FFmpeg 一把梭"是错的。正解是 FFmpeg 做封装/解封装/协议/音频,视频硬编解直调系统 API(MediaCodec/AMediaCodec)。** 尤其编码,只能直调,FFmpeg 没有这个 wrapper。
+> **结论:Android 上"FFmpeg 一把梭"是错的。正解是 FFmpeg 做封装/解封装/协议/音频,视频硬编解直调系统 API(MediaCodec/AMediaCodec)。** 编码虽然 FFmpeg 6.0+ 也有 wrapper,但太弱,生产仍以直调为准。
 
 ---
 
@@ -613,8 +613,8 @@ Android 硬编,FFmpeg 帮不上:
 | CPU 可读帧载体 | `ByteBuffer` / `Image`(颜色格式坑多) | `CVPixelBuffer`(锁基址读) |
 | 零拷贝载体 | `Surface` / `SurfaceTexture` → OES 纹理 | `CVPixelBuffer`(IOSurface) → Metal |
 | 编码会话对象 | `MediaCodec`(configure 成 encoder) | `VTCompressionSession` |
-| **FFmpeg 编码 wrapper** | ❌ **无** | ✅ 有(`h264_videotoolbox`) |
-| FFmpeg 解码 wrapper | ✅ `*_mediacodec` | ✅ `*_videotoolbox` |
+| **FFmpeg 编码 wrapper** | ⚠️ 有(`*_mediacodec`,6.0+)但弱、生产少用 | ✅ 成熟(`h264_videotoolbox`) |
+| FFmpeg 解码 wrapper | ✅ 解码器 `*_mediacodec` | ✅ hwaccel `-hwaccel videotoolbox`(无命名解码器) |
 | 底层 HAL | OMX / Codec2 → 厂商芯片 | 苹果 Media Engine |
 
 ### 11.2 移动 MediaCodec vs 桌面 NVENC
@@ -626,7 +626,7 @@ Android 硬编,FFmpeg 帮不上:
 | 厂商碎片化 | **严重**(多家 SoC) | 单一(NVIDIA) |
 | 并发实例 | **有限**(常 1~几路,见 §十二) | 受 license/显存约束,通常更宽松 |
 | 帧载体 | Surface / ByteBuffer | CUDA device ptr(`AV_PIX_FMT_CUDA`) |
-| FFmpeg 编码支持 | ❌ 无 wrapper | ✅ `h264_nvenc` 成熟 |
+| FFmpeg 编码支持 | ⚠️ 有 wrapper(6.0+)但弱,生产直调系统 API | ✅ `h264_nvenc` 成熟 |
 | 总线 | UMA,无独立总线(慢在 tiling/同步,见 [10 §4.5.3](./10-移动端硬件编解码.md)) | 独显有 PCIe,回读真跨总线(见 [07 §5.5.1](./07-硬件编解码.md)) |
 
 一句话:**移动端 = 硬编必选 + 参数少 + 厂商碎片化 + 实例稀缺;桌面 = 硬编可选 + 参数较多 + 单一厂商 + 资源宽松。**
@@ -665,7 +665,7 @@ API 29+ 用 `MediaCodecInfo.isHardwareAccelerated()` / `isSoftwareOnly()`;老版
 OMX 是从 Khronos 沿用的老 HAL,buffer 模型和 Android 图形栈(gralloc/dma-buf)衔接差、厂商扩展乱、早期在 mediaserver 进程内。Codec2 是 Google 自研、原生围绕 dma-buf 设计、零拷贝更顺、跑独立沙箱进程。对 App 透明,`MediaCodec` 门面 API 不变,组件名前缀从 `OMX.*` 变 `c2.*`。
 
 **Q5：Android 为什么不能用 FFmpeg 硬件编码?那怎么硬编?**
-FFmpeg 在 Android 只有 MediaCodec **解码** wrapper(`h264_mediacodec` 等),**没有编码 wrapper**。硬编只能直接调 MediaCodec/AMediaCodec;用 FFmpeg 软编 libx264 功耗发热不可接受。现实是混合架构:FFmpeg 做封装/协议/音频,视频硬编解直调系统 API。
+FFmpeg 在 Android 解码有成熟的 `h264_mediacodec` 等 wrapper;编码虽然 6.0 起也有了 `h264_mediacodec` 编码器,但能力受限、有设备/API 限制,**生产里硬编基本还是直调 MediaCodec/AMediaCodec**。用 FFmpeg 软编 libx264 功耗发热不可接受。现实是混合架构:FFmpeg 做封装/协议/音频,视频硬编解直调系统 API。
 
 **Q6：ByteBuffer 模式为什么花屏?**
 颜色格式因芯片而异(I420/NV12/Flexible/私有 tiled),且 stride/slice-height ≠ width/height(有对齐填充)。按 width 紧凑拷贝必然错位花屏;私有 tiled 当线性 YUV 读得马赛克。正解:用 `Image`/`AImage` 按 rowStride/pixelStride 读,真实格式在 `INFO_OUTPUT_FORMAT_CHANGED` 后从 MediaFormat 取;能用 Surface 就别用 ByteBuffer。
@@ -738,4 +738,4 @@ MediaExtractor 拆 MP4 ──► csd ──► MediaCodec 配 Surface 解码显�
 
 ---
 
-> 一句话总结:**`MediaCodec` 是 Android 统一编解码门面,底下经 OMX(老)/Codec2(新)派给厂商硬件单元或软件实现;用好它的关键是握住"缓冲区队列 + 生命周期状态机 + releaseOutputBuffer 铁律"的心智模型,优先 Surface 零拷贝避开颜色格式坑,记住 Android 吐 Annex-B、FFmpeg 在 Android 能解码不能编码——硬编只能直调系统 API。**
+> 一句话总结:**`MediaCodec` 是 Android 统一编解码门面,底下经 OMX(老)/Codec2(新)派给厂商硬件单元或软件实现;用好它的关键是握住"缓冲区队列 + 生命周期状态机 + releaseOutputBuffer 铁律"的心智模型,优先 Surface 零拷贝避开颜色格式坑,记住 Android 吐 Annex-B、FFmpeg 在 Android 解码成熟而编码弱(6.0+ 有 wrapper 但生产多直调系统 API)——硬编实务以直调为准。**
