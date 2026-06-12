@@ -127,6 +127,139 @@ Block 本质上也是一个 OC 对象（底层结构体里有 `isa` 指针）。
 > 默认情况下，我们在 Block 里用外部的局部变量，只是拿到了它的一个**值拷贝**，是改不了原本的变量的。
 > 加了 `__block` 修饰符之后，编译器在底层会玩一个魔术：它会把这个原本在栈上的变量，包装成一个**对象类型的结构体**，并把这块内存转移到堆上。我们在 Block 内部修改这个变量时，其实是通过指针去修改堆上的那个结构体里的值，这就实现了在 Block 内部修改外部变量。”
 
+---
+
+### 💻 结合源码实例深度拆解
+
+为了能和面试官聊得更深，我们需要通过 Clang 编译（`clang -rewrite-objc`）后的 C++ 底层实现来对比这两个场景：
+
+#### 场景一：默认情况（不加 `__block`）—— 值拷贝
+
+**1. OC 示例代码：**
+
+```objc
+int age = 18;
+void (^myBlock)(void) = ^{
+    NSLog(@"age is %d", age);
+};
+age = 20;
+myBlock(); // 输出：age is 18
+```
+
+**2. 编译后的 C++ 底层结构体还原：**
+
+```cpp
+// 1. Block 本质上是一个结构体
+struct __main_block_impl_0 {
+    struct __block_impl impl;
+    struct __main_block_desc_0* Desc;
+    
+    // 关键点：Block 内部直接定义了一个同名的 int 变量，用于存储捕获的值
+    int age; 
+
+    // 构造函数
+    __main_block_impl_0(void *fp, struct __main_block_desc_0 *desc, int _age, int flags=0) 
+        : age(_age) { // 核心：这里进行了【值拷贝】，把外部的 18 传进来，赋值给结构体内部的 age
+        impl.isa = &_NSConcreteStackBlock; // 此时在栈上
+        impl.FuncPtr = fp; // 指向 Block 的执行函数
+        Desc = desc;
+    }
+};
+
+// 2. Block 内部要执行的代码段（函数指针指向的地方）
+static void __main_block_func_0(struct __main_block_impl_0 *__cself) {
+    // 核心：这里访问的 age，其实是结构体内部的 age（值是 18），而不是外部的那个 age
+    int age = __cself->age; 
+    NSLog(@"age is %d", age);
+}
+```
+
+* **为什么输出是 18？**：在创建 `myBlock` 的瞬间，外部的 `age` (18) 已经通过构造函数**值拷贝**（Copy By Value）到了结构体内部的 `age` 成员变量中。此后外部修改 `age = 20`，跟 Block 内部保存的 `age` 毫无关系。
+* **为什么内部不能修改？**：因为在 C++ 层中，`__main_block_func_0` 里的 `age` 属性是只读的，在内部写 `age = 30;` 相当于试图修改传入的 `const` 参数，编译器会直接报错。
+
+#### 场景二：加了 `__block` 修饰符 —— 指针拷贝（包装为结构体对象）
+
+**1. OC 示例代码：**
+
+```objc
+__block int age = 18;
+void (^myBlock)(void) = ^{
+    age = 20; // 内部可以修改
+    NSLog(@"age is %d", age);
+};
+myBlock(); // 输出：age is 20
+NSLog(@"outside age is %d", age); // 外部也变为了 20
+```
+
+**2. 编译后的 C++ 底层结构体还原：**
+
+```cpp
+// 1. __block 变量被包装成一个专门的结构体对象
+struct __Block_byref_age_0 {
+    void *__isa; // 它也是个对象
+    struct __Block_byref_age_0 *__forwarding; // 关键：指向自身的指针
+    int __flags;
+    int __size;
+    int age; // 真正的那个 age 值保存在这里
+};
+
+// 2. Block 的底层结构体
+struct __main_block_impl_0 {
+    struct __block_impl impl;
+    struct __main_block_desc_0* Desc;
+    
+    // 关键点：Block 内部捕获的不再是简单的 int，而是指向包装后结构体对象的指针！
+    struct __Block_byref_age_0 *age; 
+
+    __main_block_impl_0(void *fp, struct __main_block_desc_0 *desc, struct __Block_byref_age_0 *_age, int flags=0) 
+        : age(_age) { // 指针拷贝，让 Block 内部持有该结构体的指针
+        impl.isa = &_NSConcreteStackBlock;
+        impl.FuncPtr = fp;
+        Desc = desc;
+    }
+};
+
+// 3. Block 内部执行的代码
+static void __main_block_func_0(struct __main_block_impl_0 *__cself) {
+    struct __Block_byref_age_0 *age = __cself->age; // 拿到保存的结构体指针
+    
+    // 核心：通过 __forwarding 指针找到并修改包装结构体内部的 age 变量
+    (age->__forwarding->age) = 20; 
+    
+    NSLog(@"age is %d", (age->__forwarding->age));
+}
+```
+
+---
+
+### 🌟 面试满分加分项：为什么要通过 `__forwarding` 指针？（从栈到堆的转移）
+
+面试官通常会在你讲完上述底层后顺藤摸瓜：**“既然能够拿到指针，为什么不直接修改 `age->age`，而要多此一举地绕一个圈子，通过 `age->__forwarding->age` 来修改？”**
+
+这涉及 Block 的 **Copy（拷贝）机制**：
+
+1. **栈状态**：当 Block 创建在**栈**上时，外部的 `__block` 变量结构体也在**栈**上。此时，栈上结构体的 `__forwarding` 指针指向的就是**它自己**（即栈上的结构体）。
+2. **堆状态**：当 Block 被 copy 到**堆**上时，运行时系统（Runtime）会把栈上的 `__block` 变量结构体也**拷贝一份到堆上**。
+   * 此时，**栈上**结构体的 `__forwarding` 指针会指向**堆上的新结构体**。
+   * **堆上**结构体的 `__forwarding` 指针会指向**它自己**。
+
+```text
+【栈上的 Block】访问 age ──> 【栈上的 __Block_byref_age_0】
+                                            │
+                                      __forwarding 指针 ────────┐
+                                                                 ▼
+【堆上的 Block】访问 age ──> 【堆上的 __Block_byref_age_0】 <─────┘
+                                            │
+                                      __forwarding 指针 ──── 指向自己
+```
+
+**🗣️ 终极满分回答：**
+> “通过 `__forwarding` 指针，可以完美保证**无论是在栈上还是在堆上修改这个 `__block` 变量，改到的都是同一份数据**！
+> 
+> 只要 Block 被 copy 到堆上，栈上结构体的 `__forwarding` 就会自动指向堆上的结构体。此时即使我们在栈上操作变量，通过 `age->__forwarding->age` 的调用链，实际上修改的依然是堆上的那份真实数据。这就解决了栈堆数据同步的问题。”
+
+---
+
 **⚠️ 高级追问与坑点：`__block` 会导致野指针吗？**
 
 **答案：一般不会导致野指针，但会极其容易导致**循环引用（内存泄漏）*。如果是特殊场景下的裸指针（如 C 数组或 char），则可能产生野指针。**

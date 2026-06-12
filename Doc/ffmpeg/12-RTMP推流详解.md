@@ -615,13 +615,103 @@ avformat_free_context(outputCtx);
 
 ## 十一、常见坑与误区（必看）
 
+> 推流出问题，**先分清是花屏、黑屏还是卡顿**——三者根因和排查路径不同，别一上来只查 sequence header。下面 §11.1~§11.3 是系统排查指南；§11.4 是速查表。
+
+### 11.1 先看现象：花屏 vs 黑屏 vs 卡顿
+
+| 现象 | 观众/拉流端看到什么 | 大概率原因 | 优先查什么 |
+| ---- | ------------------- | ---------- | ---------- |
+| **黑屏** | 有声音、画面全黑 | 没发 / 没收 **sequence header（avcC）**；解码器根本没初始化 | publish 后是否先发 `0x17 0x00`；SPS/PPS 是否有效 |
+| **花屏** | 马赛克、绿块、撕裂、局部乱码 | 码流格式错（Annex-B/AVCC）、**参考帧断了**、NALU 边界错、IDR 丢失 | 裸流格式、丢帧策略、GOP/关键帧 |
+| **卡顿** | 帧率低、一顿一顿、像 PPT | 推流端掉帧、**TCP 反压**、编码/发送同步阻塞、发热降频 | 发送队列水位、本地录制对比、FPS 打点 |
+| **忽快忽慢 / 音画不同步** | 画面变速、嘴型对不上 | **时间戳(DTS/PTS)乱**、没交织发送、B 帧重排序 | DTS 单调性、`av_interleaved_write_frame`、关 B 帧 |
+
+**易混点**：
+
+- **首帧花一下再正常**：常是 sequence header 晚到或首包不是 IDR，偏黑屏/关键帧问题。
+- **全程花**：多半是 AVCC 封装从头到尾就错了。
+- **弱网后突然花几秒**：丢参考帧但没补 IDR，偏花屏 + 丢帧策略。
+- **本地录制也花**：编码器/颜色格式问题，**别先查 RTMP**，先查编码输出。
+
+### 11.2 推荐排查流程（公司里也这么干）
+
+```text
+Step 1  现象定性
+        ├─ 全程花？偶发花？刚开播就花？播久了才花？
+        └─ 本地录制正常、只有 RTMP 花？→ 偏网络/发送侧
+
+Step 2  隔离编码/封装
+        ├─ dump 推流前裸 H.264 或 FLV，ffplay 本地播
+        ├─ 本地也花 → 编码/颜色格式/AVCC 转换问题
+        └─ 本地正常、观众花 → 传输/服务器/拉流端
+
+Step 3  查 sequence header
+        ├─ publish 后是否先发 avcC + AudioSpecificConfig
+        ├─ 中途改分辨率/旋转是否重发 sequence header
+        └─ Wireshark：第一个视频包是否 17 00（AVC sequence header）
+
+Step 4  查封装格式
+        ├─ 是否误把 Annex-B（00 00 00 01）塞进 RTMP
+        ├─ AVCC 长度前缀字节数是否和 avcC 里 lengthSizeMinusOne 一致
+        └─ AAC 是否误带 ADTS 头
+
+Step 5  查时间戳
+        ├─ 视频 DTS 是否严格单调递增
+        ├─ 是否 av_interleaved_write_frame 交织
+        └─ time_base 是否正确 rescale
+
+Step 6  查编码与丢帧
+        ├─ 队列满时是否随机丢帧（应丢整条 GOP 或立刻 IDR）
+        ├─ 弱网后是否 request IDR / insert keyframe
+        └─ 直播是否关了 B 帧
+```
+
+**面试 30 秒收口**：「封装（AVCC + sequence header）→ 时间戳（DTS 单调 + 交织）→ 参考帧（GOP 级丢帧 + IDR）→ 本地录制隔离编码 vs 网络。」
+
+### 11.3 花屏专项：常见原因与处理
+
+| 原因 | 典型表现 | 处理方法 |
+| ---- | -------- | -------- |
+| **Annex-B 误当 AVCC 推** | 全程花、马赛克 | 去起始码、改 4 字节长度前缀；SPS/PPS 放进 sequence header（见 [05](./05-H264-MP4-NALU.md) §四） |
+| **sequence header 缺失/过期** | 开播花、新观众进来花几秒 | publish 后先发 avcC；分辨率/旋转变化后**重发** sequence header |
+| **DTS 回退 / 时间基准错** | 撕裂、忽快忽慢 | DTS 单调；rescale 到输出 time_base；`av_interleaved_write_frame` |
+| **丢参考帧（丢帧策略错）** | 弱网/队列满后突然花 | **按 GOP 丢**，不随机丢 P 帧；队列满立刻 `request IDR` |
+| **IDR 来得太晚** | 中途切入、重连后花 | 缩短 GOP（1~2s）；重连后强制关键帧；服务器缓存最近 IDR |
+| **NALU 长度前缀不一致** | 部分机型花、间歇花 | avcC 声明与打包逻辑一致（通常 4 字节）；抓包看数据帧非起始码 |
+| **编码器吐坏流** | **本地录制也花** | 查 stride/颜色格式（[14](./14-Android硬件编解码.md) §3.4）；CBR + 关 B 帧 |
+| **中途 SPS 变了没通知** | 旋转/切分辨率后花 | 停流或重发 sequence header + IDR |
+| **H.265 链路不认** | 部分 CDN/播放器花 | 确认全链路支持 enhanced RTMP，或换协议 |
+| **发送侧组包 bug** | 本地正常、RTMP 花 | 同参数写本地 MP4 vs RTMP 对比；查发送队列并发写 |
+
+**一眼区分 AVCC vs Annex-B（抓包/xxd）**：
+
+```text
+AVCC 数据帧：17 01 [4B长度] 65/41/01...   ← RTMP 正确形态
+Annex-B：    00 00 00 01 67/68/65...       ← 进 RTMP 必花
+```
+
+**实用命令**：
+
+```bash
+# 拉流存 FLV 本地验证
+ffmpeg -i rtmp://... -c copy -t 30 dump.flv && ffplay dump.flv
+
+# 看包结构
+ffprobe -show_packets -select_streams v dump.flv
+```
+
+### 11.4 坑与误区速查表
 
 | 症状 / 误区              | 根因                                      | 怎么修                                                         |
 | -------------------- | --------------------------------------- | ----------------------------------------------------------- |
 | 推流端口连不上              | 1935 偏门端口被企业/校园防火墙封                     | 换 RTMPS(443) 或在能出网的环境推                                      |
 | 文件推流瞬间结束/服务器卡死       | 忘了 `-re`，FFmpeg 以最快速度把整个文件推完            | 文件源加 `-re` 按原速推                                             |
-| 拉流端**黑屏但有声音 / 首帧花屏** | 没先发**视频 sequence header(avcC/SPS/PPS)** | publish 后先发 sequence header 再发数据帧                           |
+| 拉流端**黑屏但有声音**        | 没先发**视频 sequence header(avcC/SPS/PPS)** | publish 后先发 sequence header 再发数据帧（见 §11.1）                |
+| **首帧花屏**后恢复           | sequence header 晚到或首包不是 IDR              | 确保 avcC 在首帧数据前；首包尽量 IDR（见 §11.3）                            |
+| **全程花屏 / 马赛克**        | Annex-B 误用、NALU 边界错                      | 转 AVCC；查长度前缀（见 §11.3）                                        |
+| **弱网后突然花屏**           | 丢参考帧、没补 IDR                             | GOP 级丢帧 + `request IDR`；异步发送队列避免反压（见 §11.3）                  |
 | 画面花屏、忽快忽慢、音画不同步      | **时间戳(DTS)不单调或没对齐**、音视频没按时间戳交织          | DTS 单调 + 用输出 time_base + `av_interleaved_write_frame`       |
+| **卡顿 / 帧率掉成 PPT**      | TCP 反压、编码推流同步阻塞、发热降频                   | 异步发送队列 + 队列水位 ABR；本地录制对比隔离网络（见 §11.1）                      |
 | 误以为 RTMP 视频是 Annex-B | RTMP/FLV 用 **AVCC 长度前缀**，不是起始码          | 从 Annex-B 源推流要先转 AVCC（见 [05](./05-H264-MP4-NALU.md) §四）     |
 | 音频推上去拉流端解不出          | RTMP/FLV 的 AAC 是**裸帧**，误带了 ADTS 头       | 推流前剥掉 ADTS 头（见 §7.6 F 段）                                    |
 | 推了 B 帧导致延迟高/兼容差      | 直播不该用 B 帧（PTS≠DTS 引入重排序延迟）              | 编码端无 B 帧 + zerolatency（[06](./06-编码参数与码控.md)）               |
@@ -655,8 +745,8 @@ RTMP 的音视频消息体≈FLV Tag 的 body（类型/时间戳挪到了 RTMP m
 RTMP 长连接、来帧即发、无切片缓冲；HLS 要把流切成 `.ts` 小文件、播放器还要攒几个切片才起播。
 - **Q：为什么浏览器不能直接播 RTMP？怎么办？**
 RTMP 依赖已停用的 Flash。观众端改用 HTTP-FLV（flv.js 解析喂 `<video>`）或 HLS。
-- **Q：推流黑屏/花屏怎么排查？**
-先看有没有发 sequence header（黑屏常因没发 avcC）；再看时间戳是否单调、音视频是否按 DTS 交织；再看是否误用 Annex-B / B 帧。
+- **Q：推流黑屏/花屏/卡顿怎么排查？**
+先三分法（§11.1）：黑屏→sequence header；花屏→AVCC/参考帧/IDR；卡顿→发送反压/掉帧。再按 §11.2 六步：本地录制隔离 → 查 avcC → 查 AVCC → 查 DTS → 查 GOP/IDR。花屏专项见 §11.3。
 - **Q：RTMP vs SRT vs WebRTC 推流？**
 RTMP：TCP、生态最成熟、1-3s、推流事实标准；SRT：可靠 UDP、抗丢包、几百 ms-1s、适合弱网回传；WebRTC：UDP+RTP、几百 ms、互动级但要 ICE/SFU，重。
 - **Q：Chunk header 里哪个字段是小端？**
@@ -687,6 +777,9 @@ RTMP：TCP、生态最成熟、1-3s、推流事实标准；SRT：可靠 UDP、�
 - RTMP/FLV 里的 AAC 带不带 ADTS 头？
 - 用 FFmpeg C API 推流，输出格式应该填什么？时间戳要注意什么？
 - 拉流端黑屏但有声音，最可能是哪一步出了问题？
+- 花屏、黑屏、卡顿三者怎么区分？各自优先查什么？（见 §11.1）
+- 弱网后突然花屏，最可能是什么丢帧/关键帧问题？（见 §11.3）
+- 怎么用「本地录制 vs RTMP 推流」隔离编码问题和网络问题？
 - 为什么 RTMP 延迟比 HLS 低、却又被认为"该被淘汰"？现在推流端为什么还在用它？
 - RTMP / SRT / WebRTC 推流各自的延迟量级和适用场景？
 

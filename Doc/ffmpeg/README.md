@@ -110,7 +110,7 @@
 
 ### "RTMP 推流怎么做？握手/连接流程？和 FLV 什么关系？推流黑屏花屏？"
 
-→ [12-RTMP推流详解.md](./12-RTMP推流详解.md)：推流全链路、握手 C0/C1/C2、Chunk 分块、connect/createStream/publish、RTMP↔FLV Tag 关系、ffmpeg C API 推流、坑表 + 面试题。
+→ [12-RTMP推流详解.md](./12-RTMP推流详解.md)：推流全链路、握手 C0/C1/C2、Chunk 分块、connect/createStream/publish、RTMP↔FLV Tag 关系、ffmpeg C API 推流；**花屏/黑屏/卡顿三分法排查（§11.1~§11.3）** + 坑表 + 面试题。
 
 ### "为什么直播用 FLV / TS 不用普通 MP4？几种封装格式怎么选？"
 

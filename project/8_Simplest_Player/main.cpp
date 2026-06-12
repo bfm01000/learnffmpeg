@@ -35,6 +35,7 @@ extern "C" {
 
 #include <cstdint>
 #include <cstdio>
+#include <queue>
 
 // 建解码器并打开——视频③已逐行讲过这四步(find_decoder → alloc_context3 →
 // parameters_to_context → open2)。音频是一模一样的流程,所以抽成函数复用:
@@ -218,6 +219,7 @@ int main(int argc, char **argv) {
 
     long decodedFrameCount = 0;
     long droppedFrameCount = 0;   // A4:落后音频被丢掉、没显示的帧
+    long audioFrameCount = 0;     // 诊断用:已处理的音频帧数
     bool firstFramePrinted = false;
 
     // ===== 阶段⑤ 的状态：YUV → RGB 转换器 + 目标 RGB 缓冲 =====
@@ -239,6 +241,15 @@ int main(int argc, char **argv) {
     double timeBaseSeconds = av_q2d(videoStream->time_base);
     Uint32 playbackStartTicks = 0;    // 第一帧显示瞬间的墙钟(ms),作为整段播放的时间原点
     bool playbackStarted = false;
+
+    // ===== A4 音频时钟锚点:用 PTS+墙钟 替代不可靠的 SDL_GetQueuedAudioSize =====
+    // WSL2 上 PulseAudio 会立刻消费 SDL 缓冲区(不等硬件播完),导致 playedBytes 虚高。
+    // 正确做法:每当音频入队,记录"这一批音频尾部 PTS + 此刻墙钟 + SDL 缓冲字节数",
+    // 之后音频时钟 = 锚点PTS - 锚点缓冲时间 + 锚点后流逝墙钟。
+    double audioAnchorPtsEnd = 0.0;      // 最近一批音频帧的尾部 PTS(秒)
+    Uint32 audioAnchorWallTicks = 0;     // 那批音频入队时刻的墙钟(ms)
+    double audioAnchorQueuedSecs = 0.0;  // 那批音频入队时刻 SDL 缓冲时长(秒)
+    double audioClockSeconds = 0.0;
 
     // 内层:把解码器当前攒着的帧全部取出来。封装成 lambda 复用——drain 阶段(末尾)也要调它。
     auto drainDecodedFrames = [&]() {
@@ -304,18 +315,79 @@ int main(int argc, char **argv) {
             double videoClockSeconds =
                 (frame->pts == AV_NOPTS_VALUE) ? 0.0 : frame->pts * timeBaseSeconds;
             if (audioDevice != 0) {
-                // 音频时钟 = 声卡"已经播放"的秒数。SDL_GetQueuedAudioSize 返回队列里还没播的字节,
-                // 已排入 - 还没播 = 已播放字节,除以每秒字节数 = 已播放秒数。声卡硬件节奏最准,做主时钟。
-                uint64_t playedBytes = totalQueuedBytes - SDL_GetQueuedAudioSize(audioDevice);
-                double audioClockSeconds = (double)playedBytes / audioBytesPerSecond;
+                // ===== A4 音频时钟计算 =====
+                // 公式: audioClock = audioAnchorPtsEnd - correctionSecs + elapsedSinceAnchor
+                //
+                // 三个变量含义:
+                //
+                //   audioAnchorPtsEnd    — 最近一批入队音频的"尾部 PTS"(秒)。
+                //                          如果这批音频从内容的 0.8s 播到 1.0s,这个值就是 1.0。
+                //                          代表:声卡把手头这批数据全播完时,内容时间应该走到哪。
+                //
+                //   correctionSecs       — 安全修正量(秒):"声卡缓冲里还有多少秒数据没播完"。
+                //                          audioAnchorPtsEnd 假设缓冲已播空,但实际还有数据垫着,
+                //                          所以要往回减掉这部分。取 max(当前值, 锚点快照) 做地板,
+                //                          防止 PulseAudio 偷数据导致当前值虚低(见下文)。
+                //
+                //   elapsedSinceAnchor   — 拍完锚点快照后又过了多少秒(真实墙钟流逝)。
+                //                          墙钟是唯一可靠的时间源:每秒稳定前进,不受音频驱动影响。
+                //                          锚点快照是过去的,补上这段时间的流逝才能得到"现在"的时钟。
+                //
+                // 为何用锚点而非直接查 SDL_GetQueuedAudioSize:
+                //   WSL2 上 PulseAudio 会立刻吞掉 SDL 缓冲(不等硬件播完),
+                //   导致 SDL_GetQueuedAudioSize 返回的值快速归零,用它直接算时钟会乱跳。
+                //   正确做法:每次入队时拍下 (尾部PTS, 墙钟, 缓冲时长) 三张快照作为锚点,
+                //   之后只信墙钟流逝,缓冲部分取 max(当前,快照) 兜底。
+                if (audioAnchorWallTicks > 0) {
+                    // 锚点后的真实墙钟流逝(秒)——唯一可靠的时间推进来源
+                    double elapsedSinceAnchor =
+                        (SDL_GetTicks() - audioAnchorWallTicks) / 1000.0;
+                    // 此刻声卡缓冲还剩多少秒 —— 在 WSL2 上可能已因 PulseAudio 偷数据而虚低
+                    double curQueuedSecs =
+                        (double)SDL_GetQueuedAudioSize(audioDevice) / audioBytesPerSecond;
+                    // 安全修正:取 max(当前缓冲, 锚点快照缓冲)。
+                    // PulseAudio 只会让值变小不会变大,所以取较大者做地板。
+                    double correctionSecs =
+                        (curQueuedSecs > audioAnchorQueuedSecs) ? curQueuedSecs : audioAnchorQueuedSecs;
+                    // 音频时钟 = 锚点尾部PTS(播到哪) - 还没播完的缓冲 + 墙钟又走了多久
+                    audioClockSeconds = audioAnchorPtsEnd - correctionSecs + elapsedSinceAnchor;
+                    if (audioClockSeconds < 0.0) audioClockSeconds = 0.0;
+                } else {
+                    audioClockSeconds = 0.0;  // 还没入队任何音频
+                }
+
                 double driftSeconds = videoClockSeconds - audioClockSeconds;
+
+                // ---- 诊断日志:每 10 帧或丢帧时打印同步状态 ----
+                Uint32 queuedSize = SDL_GetQueuedAudioSize(audioDevice);
+                bool shouldLog = (decodedFrameCount <= 60) ||          // 前 60 帧全打
+                                 (decodedFrameCount % 30 == 0) ||      // 之后每 30 帧打
+                                 (driftSeconds < -0.05);               // 接近或触发丢帧时打
+                if (shouldLog) {
+                    std::fprintf(stderr,
+                        "[SYNC] frame=%ld | vPTS=%.3fs aClk=%.3fs drift=%.0fms | "
+                        "anchor(end=%.3f qSecs=%.3f elapsed=%.0fms) | totalQ=%lu qSize=%u | ",
+                        decodedFrameCount, videoClockSeconds, audioClockSeconds,
+                        driftSeconds * 1000.0,
+                        audioAnchorPtsEnd, audioAnchorQueuedSecs,
+                        (audioAnchorWallTicks > 0)
+                            ? (double)(SDL_GetTicks() - audioAnchorWallTicks)
+                            : 0.0,
+                        (unsigned long)totalQueuedBytes, (unsigned)queuedSize);
+                }
+
                 if (driftSeconds > 0.0) {
-                    SDL_Delay((Uint32)(driftSeconds * 1000.0));  // 视频超前 → 等音频追上
+                    Uint32 delayMs = (Uint32)(driftSeconds * 1000.0);
+                    if (shouldLog) std::fprintf(stderr, "⏸ delay=%ums\n", (unsigned)delayMs);
+                    SDL_Delay(delayMs);  // 视频超前 → 等音频追上
                 } else if (driftSeconds < -0.1) {
                     // 视频落后音频 > 100ms → 丢掉这帧追同步(在转换/渲染之前丢,省掉无用功)
+                    if (shouldLog) std::fprintf(stderr, "❌ DROP\n");
                     ++droppedFrameCount;
                     av_frame_unref(frame);
                     continue;
+                } else {
+                    if (shouldLog) std::fprintf(stderr, "▶ render\n");
                 }
             } else {
                 // 没音频:退回墙钟节奏(⑦ 原逻辑),以第一帧为时间原点
@@ -366,24 +438,111 @@ int main(int argc, char **argv) {
                 int byteCount = convertedSamples * outChannels * outBytesPerSample;
                 SDL_QueueAudio(audioDevice, outBuffer, byteCount);  // 排进声卡,后台自动播放
                 totalQueuedBytes += (uint64_t)byteCount;
+
+                // A4 锚点:用 PTS+墙钟 做音频时钟,避免依赖 SDL_GetQueuedAudioSize(WSL2 不可靠)
+                double aPts = (audioFrame->pts == AV_NOPTS_VALUE) ? -1.0
+                              : audioFrame->pts * av_q2d(audioStream->time_base);
+                double frameDuration = (double)audioFrame->nb_samples / outSampleRate;
+                double aPtsEnd = (aPts >= 0.0) ? (aPts + frameDuration) : (audioAnchorPtsEnd + frameDuration);
+                // 更新锚点:这批音频尾部 PTS + 此刻墙钟 + 此刻 SDL 缓冲时长
+                audioAnchorPtsEnd = aPtsEnd;
+                audioAnchorWallTicks = SDL_GetTicks();
+                audioAnchorQueuedSecs = (double)SDL_GetQueuedAudioSize(audioDevice) / audioBytesPerSecond;
+
+                // 诊断:前 10 个音频帧打印排队信息
+                ++audioFrameCount;
+                if (audioFrameCount <= 10 || audioFrameCount % 50 == 0) {
+                    std::fprintf(stderr,
+                        "[AUDIO] aFrame=%ld | aPTS=%.3fs end=%.3fs | queued %d bytes (totalQ %lu) | "
+                        "qSize=%u qSecs=%.3f\n",
+                        audioFrameCount, aPts, aPtsEnd, byteCount, (unsigned long)totalQueuedBytes,
+                        (unsigned)SDL_GetQueuedAudioSize(audioDevice),
+                        (double)SDL_GetQueuedAudioSize(audioDevice) / audioBytesPerSecond);
+                }
             }
             av_freep(&outBuffer);   // 每帧 alloc/free 简单直观;真播放器会复用一块大缓冲
             av_frame_unref(audioFrame);
         }
     };
 
-    // 外层:不停从文件读 packet,视频包喂视频解码器、音频包喂音频解码器。
-    while (!quitRequested && av_read_frame(formatContext, packet) >= 0) {
-        if (packet->stream_index == videoStreamIndex) {
-            if (avcodec_send_packet(codecContext, packet) >= 0) {
-                drainDecodedFrames();
+    // ===== 阶段④：解码循环(基于单线程 PacketQueue 队列分流架构) =====
+    // 之前分配的通用 packet 不再需要，我们将其释放，后续每次 demux 时单独分配。
+    av_packet_free(&packet);
+
+    std::queue<AVPacket*> videoQueue;
+    std::queue<AVPacket*> audioQueue;
+    bool eofReached = false;
+
+    while (!quitRequested) {
+        // 1. 填充包队列：当队列未满且未到 EOF 时，持续读取并分流 AVPacket
+        // 限制队列最大 150 个包，防止内存占用过大，同时提供充足的 look-ahead 缓冲
+        while (!quitRequested && !eofReached && videoQueue.size() < 150 && audioQueue.size() < 150) {
+            AVPacket *readPacket = av_packet_alloc();
+            int ret = av_read_frame(formatContext, readPacket);
+            if (ret < 0) {
+                av_packet_free(&readPacket);
+                if (ret == AVERROR_EOF) {
+                    eofReached = true;
+                }
+                break;
             }
-        } else if (audioCodecContext && packet->stream_index == audioStreamIndex) {
-            if (avcodec_send_packet(audioCodecContext, packet) >= 0) {
-                drainAudioFrames();
+            if (readPacket->stream_index == videoStreamIndex) {
+                videoQueue.push(readPacket);
+            } else if (audioCodecContext && readPacket->stream_index == audioStreamIndex) {
+                audioQueue.push(readPacket);
+            } else {
+                av_packet_free(&readPacket); // 不感兴趣的流，直接释放
             }
         }
-        av_packet_unref(packet);  // 不论哪种包,读进来用完都要 unref(见 01 §5.2)
+
+        // 2. 消费音频包：若声卡缓冲小于 0.3 秒，且音频队列有包，解码重采样并排进声卡
+        if (audioCodecContext && audioDevice != 0) {
+            double queuedSecs = (double)SDL_GetQueuedAudioSize(audioDevice) / audioBytesPerSecond;
+            while (!quitRequested && queuedSecs < 0.3 && !audioQueue.empty()) {
+                AVPacket *audioPacket = audioQueue.front();
+                audioQueue.pop();
+                if (avcodec_send_packet(audioCodecContext, audioPacket) >= 0) {
+                    drainAudioFrames();
+                }
+                av_packet_free(&audioPacket);
+                queuedSecs = (double)SDL_GetQueuedAudioSize(audioDevice) / audioBytesPerSecond;
+            }
+        }
+
+        // 3. 消费视频包：从队列取一个包解码并显示。
+        bool decodedVideo = false;
+        if (!videoQueue.empty()) {
+            AVPacket *videoPacket = videoQueue.front();
+            videoQueue.pop();
+            if (avcodec_send_packet(codecContext, videoPacket) >= 0) {
+                drainDecodedFrames();
+                decodedVideo = true;
+            }
+            av_packet_free(&videoPacket);
+        }
+
+        // 4. 退出与休眠判定：
+        // 如果音视频包队列都空了，且已到 EOF，说明彻底播放完毕，退出循环
+        if (videoQueue.empty() && audioQueue.empty() && eofReached) {
+            break;
+        }
+
+        // 如果本轮循环没有解码视频包，做个极短的休眠（5ms），防止在等待音频播放或 EOF 期间 CPU 100% 满载
+        if (!decodedVideo) {
+            SDL_Delay(5);
+        }
+    }
+
+    // 清理队列中残留的 AVPacket，防止由于中途退出（quitRequested）导致的内存泄漏
+    while (!videoQueue.empty()) {
+        AVPacket *pkt = videoQueue.front();
+        videoQueue.pop();
+        av_packet_free(&pkt);
+    }
+    while (!audioQueue.empty()) {
+        AVPacket *pkt = audioQueue.front();
+        audioQueue.pop();
+        av_packet_free(&pkt);
     }
 
     // drain(冲刷):文件读完了,但解码器内部可能还攒着几帧(尤其有 B 帧时)。
