@@ -1,13 +1,5 @@
 # FFmpeg Seek 详解：从拖动进度条到帧精确定位
 
-> **适用方向**：音视频播放器开发、视频编辑器、服务端抽帧/缩略图、直播回放、视频 AI 推理预处理
-> **难度分层**：中级（必须掌握）/ 高级（进阶加分）分界线见 §1.6
-> **预计阅读**：速记 15 分钟｜全文 45 分钟
-> **前置知识**：FFmpeg 解码管线基础（`AVFormatContext` / `AVCodecContext` / `AVPacket` / `AVFrame` 是什么）、PTS/DTS 的概念、time_base 的含义。如果还没概念，先看 [[00-FFmpeg全景导读]] 和 [[01-数据结构与生命周期]]。
-> **关联知识**：[[01-数据结构与生命周期]]（`AVIndexEntry`、`AVStream.nb_frames`）、[[05-H264-MP4-NALU]]（MP4 stss Box 与关键帧索引的关系）、[[06-编码参数与码控]]（GOP 结构与 Seek 精度的关系）
-
----
-
 ## 一、全景导读：Seek 在技术版图里的位置
 
 ### 1.1 从场景说起
@@ -71,56 +63,6 @@
 | B 站播放器 (ijkplayer) | `av_seek_frame(FLAG_BYTE)` 回到文件头 → 读到 `moov` box → 解析关键帧索引 → 按 `FLAG_FRAME` Seek | 在线视频拖动进度条时的秒开体验 |
 | AI 推理管线（目标检测/分类） | 上传时预建 FrameIndex → 线上 `AVSEEK_FLAG_FRAME` 或 `AVSEEK_FLAG_BYTE` 直接定位 → 解码目标帧 | 替代时间戳 Seek，消除 float 换算带来的帧偏差 |
 | 视频编辑器（帧精确截图） | `BuildFullFrameIndex` → 逐帧记录 byte_offset → 线上 `av_seek_frame(FLAG_BYTE, kf_offset)` → 解码到目标帧 | 帧ID 与画面 100% 对应，无漂移 |
-
-### 1.5 关联技术地图
-
-```
-                        ┌──────────────────────────┐
-                        │     FFmpeg Seek 体系      │
-                        └──────────┬───────────────┘
-                                   │
-        ┌──────────────────────────┼──────────────────────────┐
-        │                          │                          │
-        v                          v                          v
-  [容器层]                    [编解码层]                  [时间体系]
-  libavformat                libavcodec                 time_base & PTS/DTS
-  ─关联─                      ─关联─                     ─关联─
-  · AVIndexEntry             · avcodec_flush_buffers    · av_rescale_q
-    (关键帧索引，来自            (Seek 后必须 flush，         (秒↔PTS 精准换算，
-     MP4 stss / MKV cues)      否则解码器残留旧状态)        用整数避免 float 误差)
-  · avformat_seek_file       · I/P/B 帧依赖关系         · AVSEEK_FLAG_FRAME
-    (容器层 Seek 入口)          (B 帧导致 DTS≠PTS，        (按帧号 Seek，绕过
-  · av_read_frame              影响 Seek 后的解码顺序)    时间戳换算)
-    (Seek 后从这里继续读)
-                                   │
-                    ┌──────────────┴──────────────┐
-                    │                             │
-                    v                             v
-            [GOP 结构]                    [容器元信息]
-            ─关联─                        ─关联─
-            · I 帧间隔决定                · MP4: stss / stco / stsz Box
-              Seek 精度下界               · MKV: Cues / SeekHead
-            · 同 GOP 内不用               · FLV: 无原生索引，需逐帧扫描
-              重新 Seek                  · TS: 无索引，Seek 很慢
-            · Smart Seek
-              依赖 GOP 边界判断
-```
-
-### 1.6 学习优先级总览
-
-| 层级 | 内容 | 重要度 | 说明 |
-|------|------|--------|------|
-| 🟢 中级必会 | `av_seek_frame` / `avformat_seek_file` 用法 | 🔥🔥🔥 | 所有需要 Seek 的程序入口点，面试必问 |
-| 🟢 中级必会 | `AVSEEK_FLAG_BACKWARD` 的含义和默认行为 | 🔥🔥🔥 | 自己写 Seek 前必须先理解这个 flag |
-| 🟢 中级必会 | Seek 后的 `avcodec_flush_buffers` | 🔥🔥🔥 | 忘记 flush 导致花屏/解码失败的坑，99% 的人踩过 |
-| 🟢 中级必会 | time_base 与 av_rescale_q 时间戳换算 | 🔥🔥🔥 | 秒→PTS 换算有 float 截断风险，面试常考 |
-| 🟢 中级必会 | 关键帧索引 (`AVIndexEntry`) 的作用 | 🔥🔥 | 理解 Seek 为什么不是帧精确的 |
-| 🟡 高级加分 | Smart Seek：同 GOP 内不重新 Seek | 🔥🔥 | 降低拖进度条的延迟，播放器面试加分项 |
-| 🟡 高级加分 | `AVSEEK_FLAG_FRAME` 按帧号 Seek | 🔥🔥 | FFmpeg 5+ 新增，编辑器和 AI 推理首选 |
-| 🟡 高级加分 | `AVSEEK_FLAG_BYTE` 按字节偏移 Seek | 🔥🔥 | 配合 FrameIndex 实现字节级精确寻址 |
-| 🟡 高级加分 | FrameIndex 构建（逐帧扫描 + 字节偏移记录） | 🔥🔥 | 生产环境"上传时预建索引 → 线上查表"的标准模式 |
-| 🔵 专家深水区 | 不同容器格式的索引结构差异（MP4 stss vs MKV Cues vs FLV 无索引） | 🔥 | 需要深入容器格式 spec |
-| 🔵 专家深水区 | 自定义 `AVIOContext` 的 Seek 回调 | 🔥 | 网络流 / 自定义 IO 场景，需要理解 FFmpeg IO 层 |
 
 > 💡 **在进入面试速记之前，强烈建议先读完下一节**——"深入理解：`av_seek_frame` 为什么会越过多个关键帧？" 这一节从 API 设计、容器索引、音视频交错三个层面拆解了 Seek "跳太远"的根本原因。**不把这个根因搞清楚，后面的面试回答只能背结论，经不起追问。**
 
@@ -242,21 +184,6 @@ moov box
 
 ## 二、面试速记（考前 15 分钟扫一遍）
 
-> 这一部分的目标是"背了就能用"。每个问题都是面试高频原题，回答是可直接背诵的口语化表述。
-
-### 2.1 高频考点速查
-
-| # | 考点 | 一句话答案 | 出现频率 | 难度 |
-|---|------|-----------|---------|------|
-| 1 | `av_seek_frame` 和 `avformat_seek_file` 的区别 | 前者是旧 API，后者支持 `min_ts/max_ts` 范围更灵活 | 🔥🔥🔥 | 中级 |
-| 2 | `AVSEEK_FLAG_BACKWARD` 做了什么 | Seek 到目标 PTS **之前**最近的关键帧，然后顺解到目标 | 🔥🔥🔥 | 中级 |
-| 3 | Seek 后为什么必须 `avcodec_flush_buffers` | 解码器内部缓冲了旧的参考帧和未完成解码的 packet，不 flush 会花屏或解码失败 | 🔥🔥🔥 | 中级 |
-| 4 | 秒→PTS 换算的正确方式 | `av_rescale_q` 或用毫秒整数中转，**禁用 float 直除** | 🔥🔥🔥 | 中级 |
-| 5 | 为什么 Seek 不是帧精确的 | `AVSEEK_FLAG_BACKWARD` 落到最近关键帧，最多差一个 GOP 长度 | 🔥🔥 | 中级 |
-| 6 | Smart Seek 是什么 | 同 GOP 内向前 Seek 时跳过 demux seek 和 flush，直接顺解剩余几帧 | 🔥🔥 | 高级 |
-| 7 | `AVSEEK_FLAG_FRAME` 怎么用 | `av_seek_frame(fmt, stream_idx, frame_id, AVSEEK_FLAG_FRAME \| AVSEEK_FLAG_BACKWARD)` | 🔥🔥 | 高级 |
-| 8 | FrameIndex 的构建和使用 | 上传时逐帧扫描记录每帧的 byte_offset 和 is_keyframe，线上用 `AVSEEK_FLAG_BYTE` 直接跳到最近关键帧 | 🔥 | 高级 |
-
 ### 2.2 面试标准回答
 
 > 每个问题都包含：**面试官考察意图 → 口语化标准回答（可直接背诵）→ 追问预警 → 常见误区提示**。
@@ -279,34 +206,6 @@ moov box
 > //   "我要去 ts，但别给我比 min_ts 还早的，也别给比 max_ts 还晚的"
 > avformat_seek_file(fmt, stream_idx, min_ts, ts, max_ts, flags);
 > ```
->
-> **为什么这个区别很重要？** 假设视频的关键帧分别在 0s、2s、4s、6s、8s，用户 Seek 到 3.5s：
->
-> ```
-> 0s        2s        4s        6s        8s
-> │         │         │         │         │
-> I₀        I₆₀       I₁₂₀      I₁₈₀      I₂₄₀
->                     ▲
->              用户要 3.5s
-> ```
->
-> `av_seek_frame` 只能传 `3.5s` 对应的 PTS，FFmpeg 内部找 ≤3.5s 的关键帧：落到 **2s**。你没得选。
->
-> `avformat_seek_file` 的 `min_ts` 和 `max_ts` 让你可以限定关键帧的合法范围，这在实际工程中有三种典型用法：
->
-> **用法一：标准播放器 Seek。** `min_ts=INT64_MIN, ts=3.5s, max_ts=3.5s`。翻译过来是"给我一个 ≤3.5s 的关键帧就行，往前蹿多远无所谓"。行为和 `av_seek_frame` 一样，这是最常见的写法。
->
-> **用法二：按 GOP 并行切分。** 假设你要把视频分给 4 个 Worker 并行转码，Worker 1 负责 [2s, 4s)。你必须保证 Worker 1 落到 **2s 的关键帧**，而不是更早的。如果传 `min_ts=INT64_MIN`，FFmpeg 可能落到 0s 的关键帧——Worker 1 就会多做 0s~2s 的无用功，甚至跟 Worker 0 产出重复数据。正确做法是传 `min_ts=2s, ts=2s, max_ts=4s`：**"落的关键帧必须在 [2s, 4s) 区间内，不能跑到 2s 之前。"** 这就是 `min_ts` 的核心价值——你去面试音视频后端，讲清楚这个场景基本就过关了。
->
-> **用法三：快速 Seek。** 传一个宽松区间 `min_ts=3s, ts=3.5s, max_ts=4s`，FFmpeg 在 3s~4s 之间找到合适的关键帧就停，选择更多、Seek 更快。适合缩略图/预览等不需要帧精确的场景。
->
-> 总结一下：`av_seek_frame` 只能说"我要去哪"，`avformat_seek_file` 能说"我要去哪，而且我不接受比 X 早、比 Y 晚的结果"。这就是 `min_ts`/'精确目标 PTS'的本质区别。
->
-> 不过要注意——即便用 `avformat_seek_file`，最后定位到的还是关键帧，不是目标帧本身。真正要拿到目标帧，还得在 Seek 之后顺解。"
->
-> **💡 延伸：** 关于 `av_seek_frame` 为什么会"跳太远"——不是偶然的 Bug，而是 API 无边界约束 + MP4 stss 索引残缺 + 音视频交错机制三者共同导致的系统性必然，详见 §深入理解（上文，§1.6 和 §2 之间）。面试时如果面试官一直追问"为什么"，把这个三层根因讲出来，基本就过关了。
-**👨‍💻 追问预警：**
-> 面试官很可能会顺着追问两个问题：
 >
 > **追问 1：「`min_ts` 传 `INT64_MIN` 是什么意思？」**
 > 应对思路：`INT64_MIN` 表示"时间戳下界不限制"，等价于说"往前蹿多远都行，只要 ≤ target"。这是最常见的用法——简单播放器场景下传入 `INT64_MIN` 完全够用，因为你不关心落到哪个关键帧，你只关心最终解码到目标帧。
