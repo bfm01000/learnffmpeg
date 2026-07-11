@@ -11,7 +11,7 @@
 
 ## 目录
 
-1. [职责再陈述](#1-职责再陈述)
+1. [职责再陈述](#1-职责再陈述)（含 [1.1 Jitter Buffer 在 QoS 四驾马车中的位置](#11-jitter-buffer-在-webrtc-qos-四驾马车中的位置)）
 2. [原理详解（抖动/完整性/EWMA/调度）](#2-原理详解抖动完整性ewma调度)
 3. [类图与协作图](#3-类图与协作图)
 4. [设计取舍（面试追问点）](#4-设计取舍面试追问点)
@@ -61,6 +61,61 @@
 ```
 
 **★ 是本模块。**
+
+### 1.1 Jitter Buffer 在 WebRTC QoS 四驾马车中的位置
+
+Jitter Buffer 不是孤立工作的——它是 WebRTC **QoS（服务质量）与弱网对抗技术栈**里四驾马车之一。另外三驾是 **GCC（拥塞控制）、FEC（前向纠错）、NACK（丢包重传）**。它们目标一致（弱网下不卡顿、不花屏），但角色、工作阶段、解决的问题截然不同。
+
+#### 四驾马车的分工
+
+如果把 WebRTC 传输比作**一条不稳定的跨国物流快递线**：
+
+| 技术 | 类比角色 | 核心职责 | 一句话 |
+| :--- | :--- | :--- | :--- |
+| **GCC** | 交警 / 雷达 | **主动预防堵车**——监控延迟和丢包，发现网络快堵了就通知编码器降码率 | 管"发送速度"，防过载 |
+| **FEC** | 买保险 / 带备件 | **盲猜自修复**——发数据时附带冗余包（如 C = A ⊕ B），丢了 A 就用 B+C 本地解方程算回来 | 零延迟抗丢包，用带宽换时间 |
+| **NACK** | 发现少货要求重发 | **缺啥补啥**——收到 seq=1,2,4 发现缺 3，立刻通知发送端从历史缓存重传 | 有延迟抗丢包，用时间换带宽 |
+| **Jitter Buffer** | 中转分拣仓 | **消除忽快忽慢**——把乱序、突发到达的包重新排好（1,2,3,4），匀速喂给解码器 | 管"播放节奏"，消灭卡顿 |
+
+#### 接收端的协同流水线
+
+当一个 RTP 包从网络飞到设备上，四驾马车按以下顺序联合接力：
+
+```
+ [ 乱序、丢包的网络数据 ]
+          │
+          ▼
+┌──────────────────┐
+│   1. FEC 检查    │ ───► 发现丢包？能用冗余包直接解出来的，立刻在本地修好！
+└──────┬───────────┘
+       │ 修好了大部分，仍有漏网之鱼
+       ▼
+┌──────────────────┐
+│  2. NACK 检查    │ ───► FEC 修不好的大漏网之鱼，立刻发 NACK 要求发送端重传
+└──────┬───────────┘
+       │ 所有包（原始 + FEC修复 + NACK重传）陆续到达
+       ▼
+┌──────────────────┐
+│ 3. Jitter Buffer │ ───► 把到得乱七八糟的包按 SeqNum 排好队，匀速放水给解码器
+│   （★ 本模块）    │      不管前面的包是怎么救回来的——Jitter Buffer 只管"到了之后怎么排"
+└──────┬───────────┘
+       │ 完整、有序的帧
+       ▼
+┌──────────────────┐
+│ 4. RTCP 反馈机制 │ ───► 把丢包率、延迟梯度打包成 Report，发回给发送端的 GCC
+└──────┬───────────┘
+       │
+       ▼
+ [ 发送端 GCC 算法 ]  ───► 调整下一秒的发送码率
+```
+
+#### 关键区分：Jitter Buffer 和其他三个的本质不同
+
+**FEC / NACK 解决的是"有没有"的问题**（包丢了没、能不能救回来），**Jitter Buffer 解决的是"到了之后怎么办"的问题**（到了但乱序了、到得忽快忽慢）。即便 FEC 和 NACK 把丢的包全部救回来，没有 Jitter Buffer，画面照样卡顿——因为网络包到达的节奏本身就不稳定。
+
+此外，Jitter Buffer 是**唯一一个不管丢不丢包都在持续工作的模块**。FEC 只在丢包时生效，NACK 只在丢包后触发，GCC 以秒级调整码率——但 Jitter Buffer **每收到一个包都在判断**"该不该吐帧、什么时候吐"。
+
+> **面试金句**："Jitter Buffer 是接收侧的最后一公里——前面 FEC、NACK 把包救回来，Jitter Buffer 负责把它们排成解码器能吃的节奏。它是从'网络时间'到'播放时间'的翻译器。"
 
 ---
 
@@ -130,17 +185,113 @@
 
 ```
 const double SMOOTHING_FACTOR = 0.95;   // 历史值权重
+const double ALPHA = 0.05;              // 新样本权重（α = 1 - SMOOTHING_FACTOR）
 
-// 每帧到达时调用
+// 每收到一个完整帧时调用
 void UpdateJitterEstimate(int64_t arrivalIntervalMs, int64_t expectedIntervalMs) {
     int64_t jitterSampleMs = std::abs(arrivalIntervalMs - expectedIntervalMs);
-    estimatedJitterMs_ = SMOOTHING_FACTOR * estimatedJitterMs_
-                       + (1 - SMOOTHING_FACTOR) * jitterSampleMs;
+    estimatedJitterMs_ = (1 - ALPHA) * estimatedJitterMs_ + ALPHA * jitterSampleMs;
+    // 等价于: 0.95 × old + 0.05 × new_sample
 }
 ```
 
+#### 两个输入是怎么算出来的（最关键的部分）
+
+EWMA 公式本身很简单，但面试追问一定会落在 **`arrivalIntervalMs` 和 `expectedIntervalMs` 这两个数从哪来**。很多人会背公式但讲不清输入来源，一问就露馅。
+
+**`arrivalIntervalMs`（实际到达间隔）**：
+
+```
+arrivalIntervalMs = 当前帧首包到达时刻 - 上一帧首包到达时刻
+```
+
+这是网络真实给出的间隔。如果发送端每 33ms 发一帧，但经过网络抖动后，接收端可能一帧隔了 20ms 就到了（突发快）、下一帧隔了 80ms 才到（排队慢）。
+
+**`expectedIntervalMs`（期望到达间隔）**：
+
+```
+expectedIntervalMs = 当前帧的 RTP timestamp - 上一帧的 RTP timestamp
+                    ───────────────────────────────────────────────────
+                                  时钟频率 (Hz)
+
+对于视频（90kHz 时钟基）:
+  expectedIntervalMs = (rtpTimestamp - lastRtpTimestamp) / 90
+
+  // 例：30fps 相邻帧的 timestamp 差 = 90000 / 30 = 3000 ticks
+  //     expectedIntervalMs = 3000 / 90 = 33.333... ms
+
+对于音频（Opus 48kHz）:
+  expectedIntervalMs = (rtpTimestamp - lastRtpTimestamp) / 48
+  // 例：20ms 的 Opus 帧 = 960 samples
+  //     expectedIntervalMs = 960 / 48 = 20 ms
+```
+
+> **关键**：期望间隔用的是 RTP timestamp（发送端打的媒体时钟），实际间隔用的是接收端本地墙钟（`steady_clock`）。**二者的差就是网络抖动对这片数据造成的额外延迟**。如果网络零抖动，这两个数完全相等，`jitterSampleMs = 0`。
+
+**为什么不用帧序号或 wall clock 差？**
+- 帧序号只是顺序编号，不携带时间信息——发送端可能因为编码器背压导致帧间隔不是恒定的（P 帧 5ms 编完、I 帧 50ms 编完），SeqNum 没变，但真实发送节奏已经变了。
+- RTP timestamp 是从**编码器的采样时钟**打上去的，精确反映了"这一帧应该在播放时间轴上处于什么位置"——这是唯一可靠的期望间隔来源。
+
+#### 带数字的完整示例
+
+假设 30fps 视频（期望间隔 33.3ms），初始 `estimatedJitterMs_ = 0`：
+
+```
+帧 1 到达: arrivalIntervalMs = 33ms  (第一帧无上一帧,跳过)
+           estimatedJitterMs_ = 0
+
+帧 2 到达: arrivalIntervalMs = 35ms, expectedIntervalMs = 33.3ms
+           jitterSampleMs = |35 - 33.3| = 1.7ms
+           estimatedJitterMs_ = 0.95 × 0 + 0.05 × 1.7 = 0.09 ms
+           → 估计值几乎不动（历史为 0，新样本小）
+
+帧 3 到达: arrivalIntervalMs = 40ms, expectedIntervalMs = 33.3ms
+           jitterSampleMs = |40 - 33.3| = 6.7ms
+           estimatedJitterMs_ = 0.95 × 0.09 + 0.05 × 6.7 = 0.42 ms
+
+帧 4 到达: arrivalIntervalMs = 90ms, expectedIntervalMs = 33.3ms
+           jitterSampleMs = |90 - 33.3| = 56.7ms  ← 突然拥塞！
+           estimatedJitterMs_ = 0.95 × 0.42 + 0.05 × 56.7 = 3.23 ms
+           → 一次突发只把估计推到 3.2ms（实际要慢 10+ 帧才追上 56ms）
+
+... 10 帧后（每帧都 90ms 左右间隔）:
+帧 14:     estimatedJitterMs_ ≈ 28 ms  ← 终于爬到实际水平的一半
+帧 24:     estimatedJitterMs_ ≈ 45 ms  ← 接近真实值 56ms
+
+然后网络突然恢复，间隔回到 33ms:
+帧 25:     jitterSampleMs = |33 - 33.3| = 0.3ms
+           estimatedJitterMs_ = 0.95 × 45 + 0.05 × 0.3 = 42.8 ms
+           → 估计值又慢吞吞往下降...
+```
+
+**关键观察**：α = 0.05 时，EWMA 的时间常数 ≈ 1/0.05 = **20 帧**。意味着一个突变需要大约 20 帧才能让估计值跟上 63% 的变化，**完全收敛要 3-5 倍时间常数**（60-100 帧）。这就是 EWMA 天生的"慢"——也是它和 Kalman 的核心差距所在。
+
+#### 平滑因子 α 为什么选 0.05？
+
+| α 值 | 时间常数 | 收敛到 63% | 适用场景 |
+| :--- | :--- | :--- | :--- |
+| 0.01 | 100 帧 | ~3.3 秒（30fps） | 极稳定网络，几乎不过拟合 |
+| **0.05** | **20 帧** | **~0.7 秒（30fps）** | **通用 RTC（本项目选择）** |
+| 0.10 | 10 帧 | ~0.33 秒 | 快速跟踪，但估计噪声大 |
+| 0.20 | 5 帧 | ~0.17 秒 | 接近 Kalman，但容易震荡 |
+
+α = 0.05 是一个工程上的甜点：**稳态噪声低**（单个离谱样本只占 5% 权重），**恢复速度尚可**（~1 秒内反映网络变化），而且在面试中讲清楚"为什么是 0.05 而不是 0.01 或 0.10"比背一个常数更显功力。
+
+#### 初始化和冷启动
+
+```cpp
+// 第一帧没有"上一帧"，跳过本次更新，只记录时间戳
+if (lastFrameRtpTimestamp_ == 0) {
+    lastFrameRtpTimestamp_ = currentRtpTimestamp;
+    lastFrameArrivalMs_ = currentArrivalMs;
+    return;  // estimatedJitterMs_ 保持初始值 0
+}
+```
+
+冷启动时 `estimatedJitterMs_ = 0` → 前几帧的 `TargetDelayMs = 0 + DecodeDelay + RenderDelay ≈ 20ms`——缓冲极浅，容易丢帧。**实际工程中会给一个初始值**（如 30ms），防止首帧就丢。如果首帧丢了，解码器触发 PLI 请求关键帧，首帧延迟反而因为"重来一次"而更差。
+
 **优势**：实现简单（10 行）、稳态下足够准确。  
-**劣势**：突发抖动（WiFi 切换、临时拥塞）响应慢——一个 100ms 的突发可能要 10+ 帧才能反映到估计上。
+**劣势**：突发抖动（WiFi 切换、临时拥塞）响应慢——一个 100ms 的突发可能要 10+ 帧才能反映到估计上（见上面帧 4→14→24 的数字推演）。
 
 #### 方案 B：Kalman 滤波（libwebrtc 采用）
 
@@ -682,7 +833,7 @@ cmake --build . -j && ctest --output-on-failure
 
 ### Q4. EWMA 抗抖估计和 Kalman 滤波的区别？你的实现选哪个？
 
-**口语化标准答案**：EWMA 是指数加权移动平均，每帧到达更新一次估计——`new = 0.95 × old + 0.05 × sample`，实现 10 行；Kalman 把抖动建模成"每字节延迟 + 队列延迟"两个状态变量的线性系统，用卡尔曼增益动态调整新观测的权重——网络稳定时信任历史、突发时快速跟踪。**两者差异**：稳态下两者偏差 < 5%；突发抖动场景下 Kalman 收敛快 5-10 倍。我的 B 层选 EWMA：代码量是 Kalman 的 1/10、面试讲得清楚、稳态准确度接近，**主动暴露突发场景慢一拍作为已知简化**——这是有意识的工程取舍而不是能力不足。
+**口语化标准答案**：EWMA 是指数加权移动平均，每帧到达更新一次估计——`new = 0.95 × old + 0.05 × sample`，实现 10 行。核心是理解 `sample` 怎么来的：**实际到达间隔减去期望到达间隔的绝对值**。实际间隔用本机 `steady_clock` 量（帧首包到达时刻 − 上一帧首包到达时刻），期望间隔用 RTP timestamp 算（两个帧的 RTP ts 差除以时钟频率）。二者之差就是网络抖动对这帧造成的额外延迟。α = 0.05 时时间常数约 20 帧——一次突变需要 ~1 秒才在估计值里反映出来，这就是 EWMA 的"慢"。Kalman 把抖动建模成"每字节延迟 + 队列延迟"两个状态变量的线性系统，用卡尔曼增益动态调整新观测的权重——网络稳定时信任历史、突发时快速跟踪。**两者差异**：稳态下偏差 < 5%；突发场景 Kalman 收敛快 5-10 倍。我的 B 层选 EWMA：代码量 1/10、面试讲得清楚、稳态准确度接近，**主动暴露突发慢一拍作为已知简化**——这是有意识的工程取舍而不是能力不足。
 
 ### Q5. 检测到丢包后是立刻发 NACK 还是等一会儿？
 
@@ -703,6 +854,7 @@ cmake --build . -j && ctest --output-on-failure
 阶段三 · M6 主文档完成。覆盖：
 
 - ✅ 原理详解（抖动本质 + 完整性判定 + EWMA vs Kalman + 目标延迟 + 渲染调度 + 丢包检测 + 视频 vs 音频）
+- ✅ Jitter Buffer 在 WebRTC QoS 四驾马车（GCC / FEC / NACK / JitterBuffer）中的定位与协同流水线
 - ✅ 类图 + 协作时序图
 - ✅ 5 个设计取舍（环形 buffer / Marker 副信号 / NACK 延迟 / MaxWaitingTime / 关键帧三源触发）
 - ✅ 12 个 libwebrtc 源码笔记（PacketBuffer / FrameBuffer / JitterEstimator / VCMTiming / NackTracker / 总入口）

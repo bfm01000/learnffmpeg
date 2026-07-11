@@ -321,10 +321,33 @@ iOS 音视频开发
 
 ## 🔗 关联文档
 
-- [[../ffmpeg/15-iOS硬件编解码]] — VideoToolbox 编解码全流程 + 零拷贝 IOSurface 专讲
+### 基础入门
+- [[../ffmpeg/00-FFmpeg全景导读]] — 音视频通用地基（Android/iOS 通用）
+- [[../OC/【重点】OC面试高频考点与标准回答大全]] — Objective-C 语言基础（iOS 开发的前提）
+
+### iOS 音视频核心文档（本系列）
 - [[01-AVFoundation采集详解]] — AVCaptureSession 从配置到回调的完整指南
 - [[02-AudioUnit与音频处理详解]] — AudioUnit RemoteIO 音频采集与播放
 - [[03-GPUImage滤镜链详解]] — GPUImage 滤镜链框架速成
-- [[../ffmpeg/00-FFmpeg全景导读]] — 音视频通用地基（Android/iOS 通用）
-- [[../OC/【重点】OC面试高频考点与标准回答大全]] — Objective-C 语言基础（iOS 开发的前提）
+- [[04-Metal渲染与零拷贝详解]] — 🆕 Metal 渲染 + CVMetalTextureCache 零拷贝
+- [[05-VideoToolbox硬编码实战]] — 🆕 VTCompressionSession 完整编码 Demo
+- [[06-VideoToolbox硬解码实战]] — 🆕 VTDecompressionSession 完整解码 Demo
+- [[07-AVCC与Annex-B转换实战]] — 🆕 AVCC↔Annex-B 双向格式转换
+- [[08-端到端采集编码推流管线]] — 🆕 采集→编码→推流 全链路 Demo
+- [[09-AudioSession与音频策略详解]] — 🆕 AudioSession 中断/路由/后台管理
+- [[99-iOS音视频面试题全集]] — 🆕 34 道中高级面试题 + 标准回答
+
+### 独立 Demo 代码（可直接集成到 Xcode 项目）
+- [[demos/README]] — Demo 合集索引与学习路径
+- `demos/VTH264Encoder.h/.m` — H.264 硬件编码器
+- `demos/VTH264Decoder.h/.m` — H.264 硬件解码器
+- `demos/MetalYUVRenderer.h/.m` — Metal 零拷贝 YUV 渲染器
+- `demos/H264FormatConverter.h/.m` — AVCC↔Annex-B 格式转换器
+- `demos/AudioSessionManager.h/.m` — AudioSession 管理器
+
+### 跨平台 & 底层
+- [[../ffmpeg/15-iOS硬件编解码]] — VideoToolbox 编解码全文深讲（585行）
+- [[../ffmpeg/07-硬件编解码]] — 硬件编解码通用底座
+- [[../ffmpeg/10-移动端硬件编解码]] — Android + iOS 移动端硬编解
+- [[../ffmpeg/16-硬件编解码高级专题]] — 弱网恢复/LTR/SVC 等高级专题
 

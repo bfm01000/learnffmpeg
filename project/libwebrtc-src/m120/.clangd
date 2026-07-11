@@ -1,0 +1,40 @@
+# clangd configuration for libwebrtc m120 source reading
+# Used by Cursor (with clangd extension) for go-to-definition and find-references.
+#
+# Include paths mirror the WebRTC source tree root.
+# Key: the m120/ directory IS the repo root (contains modules/, api/, rtc_base/, etc.)
+#
+# clangd 18+
+
+CompileFlags:
+  # The m120 directory is the WebRTC source root
+  Add:
+    - -std=c++17
+    - -I.
+    # Additional include roots for WebRTC generated headers and third-party
+    # (not downloaded, but adding for completeness)
+    - -Iout/Default/gen
+    - -Ithird_party/abseil-cpp
+    - -Ithird_party/boringssl/src/include
+  # Remove aggressive warnings that clutter the reading experience
+  Remove:
+    - -W*
+    - -Werror
+    - -Wall
+    - -Wextra
+
+# Suppress diagnostics from external dependency patterns
+# (these files aren't downloaded, so every include of them triggers an error)
+Diagnostics:
+  # Show suppressed diagnostics count but not each individual one
+  UnusedIncludes: None
+  MissingIncludes: None
+  Suppress:
+    - '**/third_party/**'
+    - '**/out/**'
+    - drv_unknown_argument
+    - pp_file_not_found
+
+# Index for cross-file navigation
+Index:
+  Background: Build

@@ -117,8 +117,8 @@ AAC 192kbps 压缩后同样的内容 ≈ **86 MB**（压缩比 ~8:1），Opus 64
 
 | 层级 | 内容 | 重要度 | 说明 |
 |------|------|--------|------|
-| 🟢 中级必会 | AAC ADTS 头结构、raw AAC vs ADTS、AudioSpecificConfig 解析、补 ADTS 头的代码；AAC/Opus/MP3 选型对比；`avcodec_send_frame/receive_packet` 编解码循环；PCM 输入约束（`frame_size`/`nb_samples`） | 🔥🔥🔥 | 日常开发 80% 的音频问题都能用这些解决 |
-| 🟡 高级加分 | Opus 双模（SILK/CELT）原理、Opus 帧长与延迟的关系、FFmpeg 音频 parser 用法、VBR 下 PTS/nb_samples 漂移处理、`AVCodecContext.extradata` 的音频版本（AudioSpecificConfig / OpusHead） | 🔥🔥 | 处理复杂场景（WebRTC、VBR 转码、格式自动检测）时用到 |
+| 🟢 中级必会 | AAC ADTS 头结构、raw AAC vs ADTS、AudioSpecificConfig 解析、补 ADTS 头的代码；AAC/Opus/MP3 选型对比；`avcodec_send_frame/receive_packet` 编解码循环；`frame_size` 与 `nb_samples` 的正确填写；最后一帧 Padding 处理；`AVAudioFifo` 解决输入/输出采样数不匹配 | 🔥🔥🔥 | 日常开发 80% 的音频问题都能用这些解决 |
+| 🟡 高级加分 | Opus 双模（SILK/CELT）原理、Opus 帧长与延迟的关系；AAC-LD/ELD 等低延迟子规格的 frame_size 差异（512/480/960）；FFmpeg 音频 parser 用法；VBR 下 PTS/nb_samples 漂移处理；`AVCodecContext.extradata` 的音频版本（AudioSpecificConfig / OpusHead） | 🔥🔥 | 处理复杂场景（WebRTC、VBR 转码、格式自动检测）时用到 |
 | 🔵 专家深水区 | HE-AAC v2（SBR+PS 参数集）、Opus FEC 的码流级实现、心理声学模型调参、xHE-AAC/USAC | 🔥 | 需要读 ISO 14496-3 / RFC 6716 原始规范，日常不碰 |
 
 ---
@@ -447,6 +447,125 @@ while (avcodec_receive_packet(ctx, pkt) == 0) {
 | 浏览器 WebRTC | ⚠️ 可选 | ✅ 必选 |
 | 文件/流媒体生态 | ✅ 极成熟 | ⚠️ 发展中 |
 
+#### 3.2.5 Opus 码流结构：TOC 字节与帧打包（面试常问）
+
+**一帧 Opus 数据 = TOC（1 字节）+ 压缩音频数据**。TOC（Table of Contents）是 Opus 编解码器标准（RFC 6716）定义的帧自描述头，`opus_encode()` 产出的第一个字节就是 TOC——它是编解码层的东西，不是 RTP/容器额外加的。
+
+##### TOC 字节位结构（1 字节）
+
+```
+ 0  1  2  3  4  5  6  7
+┌──┬──┬──┬──┬──┬──┬──┬──┐
+│     config      │ s│ c│
+└──┴──┴──┴──┴──┴──┴──┴──┘
+  5 bit (bit0-4)   1b   2b (bit6-7)
+```
+
+| 字段 | 位宽 | 含义 | 取值 |
+|---|---|---|---|
+| **config** | bit 0-4（5 bit）| 编码模式 + 音频带宽 + 帧长 | 0-31 共 32 种组合 |
+| **s** | bit 5 | stereo 立体声标志 | 0=单声道, 1=立体声 |
+| **c** | bit 6-7（2 bit）| 帧数编码 | 0=1帧, 1=2帧, 2=3帧, 3=≥4帧（实际帧数 = c+1）|
+
+**config 字段映射表（5 bit → 32 种组合）**：
+
+| config 范围 | 编码模式 | 音频带宽 | 可选帧长 |
+|---|---|---|---|
+| 0-3 | SILK（语音优化）| NB 窄带 8kHz | 10/20/40/60ms |
+| 4-7 | SILK | MB 中带 12kHz | 10/20/40/60ms |
+| 8-11 | SILK | WB 宽带 16kHz | 10/20/40/60ms |
+| 12-15 | **Hybrid**（SILK+CELT 混合）| SWB 超宽带 24kHz | 10/20ms |
+| 16-19 | Hybrid | FB 全带 48kHz | 10/20ms |
+| 20-23 | CELT（音乐优化）| SWB | 2.5/5/10/20ms |
+| 24-27 | CELT | FB | 2.5/5/10/20ms |
+| 28-31 | 预留 | — | — |
+
+**举例**：
+
+```
+TOC = 0x4C = 01001100
+ config=01001=9  s=1  c=00=1帧
+ → config=9 → SILK 模式, WB 宽带(16kHz), 20ms 帧
+ → s=1     → 立体声
+ → c=0     → 单个 Opus 帧
+```
+
+##### 帧打包：一个 TOC 可以管多个帧
+
+**一个 TOC + c 字段** 描述一组帧——同一个 TOC 下所有帧的编码模式、带宽、立体声标志、帧长都相同，因此字节数也相同。
+
+**常见情况（1 个 TOC，管所有帧）**：
+
+```
+[RTP/容器载荷] [TOC c=2 1B] [Frame0] [Frame1] [Frame2]
+              └── 3 帧均分剩余字节，全用同一模式
+```
+
+WebRTC 默认 20ms 帧、同一编码模式不变 → 几乎永远只用 1 个 TOC。
+
+**不常见（多个 TOC，帧间切换编码模式）**：
+
+```
+[TOC1 c=0][Frame0][TOC2 c=1][Frame1][Frame2]
+    │         │        │         └── CELT FB 10ms, c=1→2 帧
+    │         │        └── SILK WB 20ms, c=0→1 帧
+    │         └── 模式改变，需要新 TOC
+    └── TOC 之间没有分隔符——读完上一组帧后指针自然落在下一个 TOC
+```
+
+##### c=0/1/2 时怎么算边界？——均分
+
+Opus 协议强约束：同一个 TOC 下所有帧**时长相同**。时长相同 + 编码模式相同 → 每帧字节数相同。所以接收端直接均分：
+
+```
+c=1（2帧）: 每帧字节数 = (payload 总字节 - 1B TOC) / 2
+c=2（3帧）: 每帧字节数 = (payload 总字节 - 1B TOC) / 3
+```
+
+不需要每帧加 2 字节长度前缀——这是 Opus 比 H.264 STAP-A 更省头的关键。
+
+**c=3（≥4 帧）需要额外长度字节辅助**，但在 WebRTC 里极其罕见（20ms×4=80ms 音频在一个包，延迟太大）。
+
+##### 接收端解析伪代码
+
+```
+ptr = payload 起始位置
+while (ptr < 包末尾) {
+    TOC    = *ptr++;           // 读 TOC
+    config = TOC & 0x1F;       // 低 5 位
+    s      = (TOC >> 5) & 1;
+    c_val  = (TOC >> 6) & 3;
+    帧数   = (c_val == 3) ? 额外解析 : c_val + 1;
+    帧大小  = 查表(config) + s 修正;
+    for (i = 0; i < 帧数; i++) {
+        解码(ptr, 帧大小);
+        ptr += 帧大小;
+    }
+    // ptr 要么指向新 TOC, 要么到达包末尾
+}
+```
+
+##### DTX 静音不传 + 带内 FEC
+
+**DTX（Discontinuous Transmission）**：说话间歇停止编码不发帧，恢复时第一个帧带特殊标记。
+
+```
+发帧: ████████████░░░░░░░░░░░░████████████
+               ↑ 静音段,不发帧  ↑ 恢复,标记首帧
+```
+
+**带内 FEC（In-band Forward Error Correction）**：可在当前帧后附带前一帧的低码率副本，前一帧丢了也能还原出可接受的语音质量：
+
+```
+RTP 包 N+1: [当前帧 N+1] [FEC: 帧 N 的低码率副本]
+                                ↑
+                           帧 N 丢了就从这恢复
+```
+
+FEC 不是每帧都带——由编码器根据预期丢包率决定。
+
+> **Opus 码流结构的 RTP 传输细节（RFC 7587）见 [06-M4-RTP传输模块.md](../../project/WebRTC/06-M4-RTP传输模块.md) §2.4**——包含多帧合包在 RTP 里的具体布局、Marker 位在 DTX 恢复时的语义、以及 Opus vs H.264 打包方式的全面对比。
+
 ### 3.3 MP3 和 FLAC 速览
 
 #### 3.3.1 MP3（MPEG-1 Audio Layer III）
@@ -493,7 +612,7 @@ ctx->time_base      = (AVRational){1, 48000};
 if (avcodec_open2(ctx, codec, NULL) < 0) { /* error */ }
 
 // 记下 frame_size——之后每次送帧的 nb_samples 就是这个值
-int frame_size = ctx->frame_size;  // AAC=1024, MP3=1152
+int frame_size = ctx->frame_size;  // AAC-LC=1024, MP3=1152
 
 // ============ 2. 分配 AVFrame ============
 AVFrame *frame = av_frame_alloc();
@@ -529,6 +648,62 @@ while (avcodec_receive_packet(ctx, pkt) == 0) {
 }
 ```
 
+#### 3.4.1.1 🟢 `nb_samples` 到底该填多少？——从 frame_size 说起
+
+这是音频编码最容易写错的入口参数。核心规则只有一条：
+
+> **`nb_samples` 必须严格匹配编码器上下文的 `codec_ctx->frame_size`。** 编码器在 `avcodec_open2` 之后自动计算并填充这个值——不要硬编码 1024，要读 `ctx->frame_size`。
+
+```c
+// ✅ 正确：打开编码器后读取 frame_size
+avcodec_open2(ctx, codec, NULL);
+frame->nb_samples = ctx->frame_size;  // 编码器告诉你它要多少
+frame->format     = ctx->sample_fmt;
+frame->ch_layout  = ctx->ch_layout;
+av_frame_get_buffer(frame, 0);        // 按以上三个参数分配 PCM buffer
+
+// ❌ 错误：硬编码
+frame->nb_samples = 1024;  // 如果编码器期望 960 或 512，send_frame 直接报错
+```
+
+#### 3.4.1.2 🟡 为什么 frame_size 不总是 1024？
+
+你可能在很多资料中看到"AAC 一帧是 1024 个采样"——这确实是 AAC-LC（Low Complexity）最常见的配置，但它**不是铁律**。不同 AAC 子规格定义的帧大小本身就不同：
+
+| AAC 子规格 | frame_size | 时长 @48kHz | 场景 |
+|-----------|-----------|------------|------|
+| **AAC-LC**（标准） | **1024** | ~21.3ms | 点播/直播/存档——最常见 |
+| **AAC-LC**（广播） | **960** | 20.0ms | 数字广播/电视，要求 20ms 整数帧长对齐视频帧 |
+| **AAC-LD**（低延迟） | **512** 或 480 | ~10.7ms / 10ms | 视频会议、双向通话 |
+| **AAC-ELD**（超低延迟） | **512** 或 480 | ~10.7ms / 10ms | WebRTC 音频备选、专业通话设备 |
+| **HE-AAC / HE-AAC v2** | **2048**（内部） | ~42.6ms | 低码率流媒体（实际每帧仍编码 1024，但 SBR 需要双倍窗口） |
+
+**为什么广播用 960？** 因为 960 个采样 @48kHz = 正好 20.0ms——和 50fps 视频的帧间隔（20ms）完美对齐，不会出现音频帧跨越两个视频帧的相位偏移。这是 MPEG 专门为电视广播定义的对齐值。
+
+**为什么低延迟用 512/480？** 帧长越短、编码器攒够一帧数据需要的时间越短、编码延迟越低。1024 采样 = 21.3ms 的先天延迟，512 采样 = 10.7ms，直接砍半。
+
+**实践中怎么确认**：打开编码器后打印 `ctx->frame_size`，不要猜。不同 FFmpeg 版本、不同编码器后端（内置 `aac` vs `libfdk_aac`）对同一 `AV_CODEC_ID_AAC` 返回的 `frame_size` 可能不同——尤其是在设置了 `profile` 为 `FF_PROFILE_AAC_LOW`（LC）vs `FF_PROFILE_AAC_LD`（LD）之后。
+
+#### 3.4.1.3 🟢 最后一帧（残帧）怎么处理？
+
+音频流的总采样数很难刚好被 `frame_size` 整除。末尾可能只剩 300 个采样。两种处理方式：
+
+**方式 A：直接送入不足一帧（部分编码器支持）**——把 `frame->nb_samples` 设为实际剩余数（如 300），然后 `avcodec_send_frame`。但**很多编码器（尤其是 libfdk_aac）不接受小于 frame_size 的帧**，会直接返回 `AVERROR(EINVAL)`。
+
+**方式 B：补零 Padding（最稳妥）**——依然填满 `frame_size`（如 1024），把有效数据放前 300 个采样，后面 724 个采样全部清零。送入后立即 send NULL 刷出残留帧：
+
+```c
+// 剩余 300 个采样时：补零送最后一帧
+frame->nb_samples = frame_size;  // 依然是 1024
+// 前 300 个有效采样已经填在 data 里
+memset(frame->data[0] + 300 * sizeof(float), 0,
+       (frame_size - 300) * sizeof(float));  // 后面清零
+avcodec_send_frame(ctx, frame);   // 送入满帧
+avcodec_send_frame(ctx, NULL);    // 立即刷出
+```
+
+**方式 B 是商业代码的标配做法**——兼容所有编码器，逻辑简单，零样本不会被解码器发出声音（幅度为零的采样 = 静音）。
+
 #### 3.4.2 解码流程
 
 ```c
@@ -558,20 +733,131 @@ while (avcodec_receive_frame(ctx, frame) == 0) { /* ... */ }
 
 #### 3.4.3 🟡 编码器和解码器的 frame_size 为什么不一致
 
-**编码器** `ctx->frame_size` 告诉你要送多少采样点进去（AAC=1024, MP3=1152）。这是压缩算法决定的——AAC 一帧编码 1024 个采样点才能做 MDCT 变换。
+**编码器** `ctx->frame_size` 告诉你要送多少采样点进去（AAC-LC=1024, MP3=1152）。这是压缩算法决定的——AAC 一帧编码 1024 个采样点才能做 MDCT 变换。
 
 **解码器** `ctx->frame_size` 一般也是 1024（AAC）/ 1152（MP3）。但 VBR 场景下 `frame->nb_samples` 可能不等于 `frame_size`——因为编码器可能填充了 padding（使总帧数对齐）。这就是前面说的 PTS 漂移的根因——不要用 `ctx->frame_size` 做 PTS 步长，用 `frame->nb_samples`。
+
+#### 3.4.4 🟡 核心痛点：输入源与编码器 nb_samples 不匹配怎么办？——AVAudioFifo
+
+这是初学者最容易踩的坑，也是最体现工程能力的知识点。
+
+**问题场景**：你从 MP3 解码出来的 AVFrame，每帧 `nb_samples=1152`。但 AAC 编码器要求 `frame_size=1024`。直接把 1152 个采样的 AVFrame 丢给 AAC 编码器——`avcodec_send_frame` 直接返回 `AVERROR(EINVAL)`（参数非法）。
+
+**更普遍的表述**：在任何"解码后重新编码"（transcoding）或"采集后编码"的场景中，输入源每次给你的采样数（麦克风采集 buffer 大小、MP3/Opus 解码输出帧长）**几乎永远不等于**目标编码器的 `frame_size`。
+
+**解决方案：`AVAudioFifo`（音频先进先出队列）**
+
+在输入源和编码器之间插入一个音频缓冲区——就像生产流水线上的"蓄水池"：
+
+```
+输入源                     AVAudioFifo                   编码器
+(任意 nb_samples)    →    蓄水池缓冲    →        (固定 frame_size)
+MP3 解码: 1152               │                    AAC 编码: 1024
+Opus 解码: 960              │                    每次取出 1024
+麦克风采集: 480             │                    不够就等着
+```
+
+**完整代码模板：**
+
+```c
+#include <libavutil/audio_fifo.h>
+
+// ============ 1. 创建 AVAudioFifo ============
+// 参数: 采样格式、声道数、初始容量（设为 0 自动分配）
+AVAudioFifo *fifo = av_audio_fifo_alloc(AV_SAMPLE_FMT_FLTP, 2, 0);
+if (!fifo) { /* error */ }
+
+// ============ 2. 输入循环：往 FIFO 里存 ============
+AVFrame *input_frame = /* 解码出来的或采集到的，nb_samples 任意 */;
+// 把输入 AVFrame 的音频数据写入 FIFO
+// ⚡ 注意：只复制数据，不复制 frame 本身的元数据
+int ret = av_audio_fifo_write(fifo, (void **)input_frame->data,
+                               input_frame->nb_samples);
+if (ret < 0) { /* error */ }
+
+// ============ 3. 编码循环：从 FIFO 取出来、凑满 1024 送编码器 ============
+AVFrame *enc_frame = av_frame_alloc();
+enc_frame->nb_samples     = ctx->frame_size;  // 1024
+enc_frame->format         = ctx->sample_fmt;
+enc_frame->channel_layout = ctx->channel_layout;
+av_frame_get_buffer(enc_frame, 0);
+
+int64_t pts = 0;
+while (av_audio_fifo_size(fifo) >= ctx->frame_size) {
+    // FIFO 里够 1024 了，取出来
+    av_audio_fifo_read(fifo, (void **)enc_frame->data, ctx->frame_size);
+
+    enc_frame->pts = pts;
+    pts += ctx->frame_size;
+
+    avcodec_send_frame(ctx, enc_frame);
+    while (avcodec_receive_packet(ctx, pkt) == 0) {
+        write_or_mux(pkt);
+        av_packet_unref(pkt);
+    }
+}
+// 循环结束后 FIFO 里可能还剩下不足 frame_size 的采样（末尾残帧）
+
+// ============ 4. 处理末尾残帧（Padding） ============
+int remaining = av_audio_fifo_size(fifo);
+if (remaining > 0) {
+    // 读出剩余的采样（不足一帧）
+    av_audio_fifo_read(fifo, (void **)enc_frame->data, remaining);
+
+    // 把剩余部分清零（静音 padding）
+    for (int ch = 0; ch < 2; ch++) {
+        memset(enc_frame->data[ch] + remaining * sizeof(float),
+               0,
+               (ctx->frame_size - remaining) * sizeof(float));
+    }
+
+    enc_frame->pts = pts;
+    avcodec_send_frame(ctx, enc_frame);
+    while (avcodec_receive_packet(ctx, pkt) == 0) {
+        write_or_mux(pkt);
+        av_packet_unref(pkt);
+    }
+}
+
+// ============ 5. 刷编码器 ============
+avcodec_send_frame(ctx, NULL);
+while (avcodec_receive_packet(ctx, pkt) == 0) {
+    write_or_mux(pkt);
+    av_packet_unref(pkt);
+}
+
+// ============ 6. 清理 ============
+av_audio_fifo_free(fifo);
+av_frame_free(&enc_frame);
+```
+
+**关键 API 对照**：
+
+| AVAudioFifo API | 作用 | 注意事项 |
+|-----------------|------|---------|
+| `av_audio_fifo_alloc(fmt, channels, nb_samples)` | 创建 FIFO | `nb_samples` 是初始容量，可设 0 自动分配 |
+| `av_audio_fifo_write(fifo, data, nb_samples)` | 写入数据 | `data` 是 `void **` 指向各声道 buffer 的指针数组 |
+| `av_audio_fifo_read(fifo, data, nb_samples)` | 读出数据 | 读出的数据从 FIFO 中**移除** |
+| `av_audio_fifo_size(fifo)` | 当前 FIFO 中缓存的采样数 | 用于判断"够不够一帧" |
+| `av_audio_fifo_free(fifo)` | 释放 FIFO | 同时也释放内部缓存的所有数据 |
+
+**⚠️ 两个容易写错的细节**：
+
+1. **不要直接传 frame->data 给 FIFO**。`av_audio_fifo_write` 的第二个参数是 `void **`——如果你的 frame 是 FLTP（planar），`frame->data` 本身就是 `uint8_t *data[8]`，直接强转 `(void **)frame->data` 是对的。但如果 frame 是 FLT（packed），数据全在 `data[0]` 里——此时要构造一个指针数组指向 `data[0]` 的各个声道偏移位置。
+
+2. **FIFO 满了会动态扩容**——不用担心初始容量设小了，`av_audio_fifo_write` 内部会自动调用 `av_audio_fifo_realloc` 扩容。但要注意内存碎片：如果处理超长音频流（几小时），建议在 FIFO 大小超过一定阈值后主动 `av_audio_fifo_drain` 清理旧数据。
 
 ### 3.5 关键 API / 参数速查
 
 | API / 参数 | 作用 | 注意事项 |
 |-----------|------|---------|
-| `codec_ctx->frame_size` | 编码器期望的每帧采样点数 | AAC=1024, MP3=1152, Opus=0（可变）, FLAC=0。**不要硬编码 1024** |
+| `codec_ctx->frame_size` | 编码器期望的每帧采样点数 | AAC-LC=1024, AAC-LD=512/480, MP3=1152, Opus=0（可变）, FLAC=0。**不要硬编码，读 `ctx->frame_size`** |
 | `codec_ctx->sample_fmt` | 编码器支持的输入/输出格式 | 设置后用 `avcodec_open2` 验证——不支持的格式会被拒绝 |
 | `codec_ctx->extradata` | 解码初始化参数 | AAC→AudioSpecificConfig（2 字节），Opus→OpusHead（19 字节），MP3→可能为 NULL（解码器自行探测） |
 | `codec_ctx->bit_rate` | 目标码率 | AAC CBR/ABR 场景必须设为有效值；Opus 可选，不设则按 `nb_samples` 和复杂度自动选 |
-| `frame->nb_samples` | 当前帧包含的采样点数 | 编码时设置为 `frame_size`，解码时由解码器填充 |
+| `frame->nb_samples` | 当前帧包含的采样点数 | 编码时设置为 `ctx->frame_size`；解码时由解码器填充；**送错值会直接 `EINVAL`** |
 | `frame->pts` | 该帧第一个采样点的 PTS | 编码时自己设置递增；解码时由解码器自动填充 |
+| `av_audio_fifo_alloc/write/read/size` | 音频 FIFO：缓冲输入源和编码器之间的采样数不匹配 | ⚠️ 转码和采集-编码场景的必备中间层——输入 `nb_samples` ≠ 编码器 `frame_size` 时用它 |
 | `avcodec_parameters_from_context()` | 把 codec ctx 的参数导出到 AVCodecParameters | 封装（muxing）时用——把编码器的 extradata 复制到流的 codecpar |
 | `av_parser_parse2()` | 从无头字节流中分割音频帧 | raw AAC 或 ADTS 字节流的分帧——parser 自动检测 frame 边界，返回完整的 frame |
 
@@ -624,7 +910,72 @@ while (av_read_frame(fmt_ctx, &pkt) >= 0) {
 
 - 常见做法：每帧 PTS `+= 1024`，固定步长。编码器是 VBR 模式，有的帧实际 `nb_samples` 不等于 1024。
 - 坑在哪里：编码器在 `avcodec_receive_packet` 时，某些帧可能因为内部 lookahead 或 padding 而输出更多或更少采样点。用固定 1024 步长累积十几个帧后，PTS 漂移可能超过 10ms——人耳能感知到音画不同步。
-- 正确做法：使用 `pkt.duration`（编码器会自动设置，在 time_base 单位下），累积 PTS = `上一帧 PTS + duration`；或者用 `av_rescale_q` 基于 `nb_samples/sample_rate` 重新计算每帧实际时长。
+- 正确做法：**不要用固定步长**，而是从编码器吐出的 packet 上取真实的 duration，逐帧累加。以下两种方案任选其一。
+
+**方案 A：用 `pkt.duration` 驱动 PTS（最推荐，编码器替你算好了）**
+
+编码器在吐出每个 AVPacket 时，会在 `pkt.duration` 里填好"这一包音频实际对应多少采样点"（以 `time_base` 为单位）。你只需要维护一个累加器：
+
+```c
+int64_t next_pts = 0;
+AVPacket *pkt = av_packet_alloc();
+
+while (has_more_input) {
+    avcodec_send_frame(ctx, frame);
+    while (avcodec_receive_packet(ctx, pkt) == 0) {
+        // ⚡ 关键：由编码器决定 PTS，不要自己 += 1024
+        pkt->pts = next_pts;
+        next_pts += pkt->duration;  // duration 由编码器设置，反映真实采样点数
+        av_interleaved_write_frame(mux_ctx, pkt);
+        av_packet_unref(pkt);
+    }
+}
+```
+
+**为什么这个方案最安全**：编码器内部知道每个包的实际采样点数——包括 padding、lookahead 带来的增减。你把 PTS 计算权交给它，就不需要关心 VBR/CBR、AAC/Opus/MP3 的差异。适用于**所有编码器、所有码控模式**。
+
+**方案 B：用 `frame->nb_samples` 自己做 `av_rescale_q`（适用于需要显式控制 PTS 的场景）**
+
+如果你想在送编码器之前就确定 PTS（比如时间戳需要和视频帧对齐），用自己的时基重算：
+
+```c
+int64_t next_pts = 0;
+// 如果目标 time_base 是 1/48000（采样率时基）
+AVRational tb = (AVRational){1, 48000};
+
+while (has_more_input) {
+    // frame->nb_samples 每帧可能不同（VBR / 末帧 padding）
+    frame->pts = next_pts;
+    next_pts += frame->nb_samples;  // 在 1/48000 时基下，步长 = 采样点数
+
+    avcodec_send_frame(ctx, frame);
+    while (avcodec_receive_packet(ctx, pkt) == 0) {
+        // pkt->pts 由编码器从 frame->pts 继承，无需手动设置
+        av_interleaved_write_frame(mux_ctx, pkt);
+        av_packet_unref(pkt);
+    }
+}
+```
+
+如果目标 time_base 不是 `1/sample_rate`（比如封装器用的是 `1/90000` 或 `1/1000`），用 `av_rescale_q` 换算：
+
+```c
+AVRational src_tb = (AVRational){1, ctx->sample_rate};   // 输入时基
+AVRational dst_tb = mux_stream->time_base;                // 输出时基（容器）
+
+frame->pts = av_rescale_q(sample_count, src_tb, dst_tb);
+sample_count += frame->nb_samples;
+```
+
+**⚠️ 方案 B 要注意两点**：
+1. `frame->nb_samples` 是每帧的实际采样数——如果是按"固定 frame_size + Padding 末帧"编码的，大部分帧的 `nb_samples` 就是 `frame_size`（1024），只有最后一帧可能不同。
+2. 如果用 `AVAudioFifo` 喂编码器（§3.4.4），从 FIFO 读出来的 `enc_frame->nb_samples` 永远是 `ctx->frame_size`（1024），所以这个场景下 PTS 固定步长其实是安全的。**真正需要警惕固定步长的，是解码输出的帧长不一致（如 VBR MP3、Opus）或采集端帧长不一致的场景。**
+
+**场景 4：MP3 解码输出 1152 采样直接送 AAC 编码器——EINVAL**
+
+- 常见做法：MP3 解码后拿到 `AVFrame`，`frame->nb_samples=1152`，直接 `avcodec_send_frame(aac_ctx, frame)`。
+- 坑在哪里：AAC-LC 编码器要求 `frame_size=1024`，你送了 1152。`avcodec_send_frame` 返回 `AVERROR(EINVAL)`——参数非法。更隐蔽的是，如果只是偶尔发生（比如 MP3 VBR 某些帧恰好是 1152），错误在运行时随机出现，很难定位。
+- 正确做法：在 MP3 解码器和 AAC 编码器之间插入 `AVAudioFifo`（见 §3.4.4）。解码出来的任意大小帧先写入 FIFO，攒够 1024 后取出送编码器，末尾不够的 Padding 补零。这个模式**适用于所有"不同帧长编解码器串联"的场景**——不仅是 MP3→AAC，还包括 Opus→AAC、采集→编码等。
 
 ### 3.8 延伸阅读与进阶方向
 
@@ -638,16 +989,20 @@ while (av_read_frame(fmt_ctx, &pkt) >= 0) {
 
 1. 不看文档，写出 7 字节 ADTS 头的结构——sync word 在哪几位？`frame_length` 占几位、跨哪几个字节？
 2. AAC-LC 的 `audioObjectType=2`，在 ADTS 头的 `profile` 字段填几？为什么？
-3. Opus 编码器的 `frame_size=0` 是什么意思？你每次编码应该送多少 `nb_samples`？
-4. AAC 编码输入是 FLTP，Opus 编码输入是 FLT——这是为什么？（提示：从"编码器内部如何处理多声道"来想）
-5. 从 FLV 提取 AAC 存成 `.aac` 文件——不补 ADTS 头直接存的后果是什么？为什么 FLV 里不需要 ADTS 头？
-6. WebRTC 为什么强制 Opus 必选？如果换成 AAC-LC，在延迟和丢包上会有什么问题？
-7. AAC 编码时 `frame->pts` 每帧递增 1024，在 1/48000 的 time_base 下——这个帧的时长是多少毫秒？如果 `nb_samples=960` 呢？
-8. `avcodec_send_frame` 编码最后为什么要 `send_frame(NULL)`？不调的话会丢什么？
-9. FLV 容器为什么不能用 Opus 封装？如果一定要用 Opus 推直播，该换什么协议？
-10. AAC/Opus/MP3/FLAC——分别说说什么时候选哪个。
+3. AAC-LC 的 `frame_size` 一定是 1024 吗？什么情况下是 960、512、480？分别对应什么场景？
+4. Opus 编码器的 `frame_size=0` 是什么意思？你每次编码应该送多少 `nb_samples`？
+5. AAC 编码输入是 FLTP，Opus 编码输入是 FLT——这是为什么？（提示：从"编码器内部如何处理多声道"来想）
+6. MP3 解码输出每帧 1152 采样，AAC 编码器要求 1024——你直接在中间传会怎样？正确的解决方案是什么？
+7. `AVAudioFifo` 的三个核心操作是什么（alloc / write / read）？什么时候用它？
+8. 音频流末尾只剩 300 个采样，但编码器要求 1024。两种处理方式分别是什么？哪种更稳妥、为什么？
+9. 从 FLV 提取 AAC 存成 `.aac` 文件——不补 ADTS 头直接存的后果是什么？为什么 FLV 里不需要 ADTS 头？
+10. WebRTC 为什么强制 Opus 必选？如果换成 AAC-LC，在延迟和丢包上会有什么问题？
+11. AAC 编码时 `frame->pts` 每帧递增 1024，在 1/48000 的 time_base 下——这个帧的时长是多少毫秒？如果 `nb_samples=960` 呢？
+12. `avcodec_send_frame` 编码最后为什么要 `send_frame(NULL)`？不调的话会丢什么？
+13. FLV 容器为什么不能用 Opus 封装？如果一定要用 Opus 推直播，该换什么协议？
+14. AAC/Opus/MP3/FLAC——分别说说什么时候选哪个。
 
-能流畅回答 **8/10** 以上，说明已经掌握 FFmpeg 音频编解码全景。
+能流畅回答 **12/14** 以上，说明已经掌握 FFmpeg 音频编解码全景。
 
 ---
 

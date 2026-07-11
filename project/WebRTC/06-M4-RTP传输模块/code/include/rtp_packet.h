@@ -1,3 +1,25 @@
+//============================================================================
+// RtpPacket — RTP 包的数据载体（RFC 3550 简化实现）
+//============================================================================
+//
+// 职责：封装一个 RTP 包的所有字段（头部 + 载荷），提供「结构体 ↔ 网络字节流」
+//       的双向转换。这是整个 RTP 模块最基础的数据结构，Packetizer 用它产出包，
+//       Depacketizer 用它解析包。
+//
+// 支持的字段：
+//   - Marker (M), Payload Type (PT), Sequence Number, Timestamp, SSRC
+//   - 载荷（raw bytes）
+//
+// 不支持（有意简化）：
+//   - CSRC 列表（本实现固定 CC=0）
+//   - RTP 扩展头（本实现固定 X=0）
+//   - Padding（本实现固定 P=0）
+//
+// 字节序：Serialize/Parse 内部手动处理网络字节序（大端），不依赖平台字节序。
+//
+// 参考：RFC 3550 §5.1（RTP Fixed Header Fields）
+//============================================================================
+
 #pragma once
 
 #include <cstddef>
@@ -6,8 +28,6 @@
 
 namespace my_webrtc {
 
-// 简化版 RTP 包（RFC 3550），不支持 CSRC 列表和扩展头。
-// 内部用独立字段保存语义，Serialize / Parse 时手动处理网络字节序（大端）。
 class RtpPacket {
 public:
     static constexpr size_t kFixedHeaderSize = 12;

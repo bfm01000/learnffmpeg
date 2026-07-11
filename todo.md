@@ -1,7 +1,33 @@
+面试前要做的事情：
+1. WebRTC重写：
+    * jitter Buffer
+    * RTP
+
+2. WebRTC整个流程梳理清楚 
+    * 拥塞控制可以讲清楚
+
+3. 自动剪辑seek拓展
+
+4. 项目补充
+* 详细讲一下你是怎么引入零拷贝的，梳理整个流程通路
+* 
+
+5. Android / iOS 硬件编解码（移动端的核心壁垒）
+
+性能的生死线：在移动端，单纯靠 C++ 软解 H.264/H.265 会导致手机发烫、掉帧、耗电极快。因此，必须使用硬解码。
+
+技术要点：
+
+Android：深入掌握 MediaCodec 的同步/异步模式，如何与 Surface / OpenGL ES 结合（即利用 GPU 的纹理 OES 进行零拷贝渲染或前处理）。
+
+iOS：深入掌握 VideoToolbox（VTCompressionSession / VTDecompressionSession）和 AudioToolbox，以及 CVPixelBuffer 的内存管理。
+
+C++ 的结合点：虽然 Android 和 iOS 的硬编解码多有系统原生的 API，但现代音视频架构（如底层跨平台 SDK）都是用 C++ 承载核心骨架，再通过 JNI (Android) 或 Objective-C++ (iOS) 去调用系统底层的硬编解码。 这种跨平台封装能力非常值钱。
+
+其他：
+
 * 码率切换导致的画面模糊应该如何处理
 * 去看一下预览延时优化部分，h264解码出来的帧格式是什么
-
-* 去看一下BMG重构的代码
 
 * ===
 bt.601

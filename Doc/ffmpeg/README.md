@@ -50,6 +50,9 @@
    |
    v
 12 RTMP 推流详解       <- 08 推流那一格的深挖,做直播/推流才学
+   |
+   v
+19 HLS 详解             <- 08 分发那一格的深挖,做直播/CDN分发才学
 ```
 
 > 09 是面试题集与自检（贯穿全部主题）；10 是 07 的移动端总览，13/14/15 分别是 NVIDIA / Android / iOS 的专题深挖，16 是它们的跨平台高级进阶——都不在主线顺序里，按需读。
@@ -75,6 +78,7 @@
 | [10-移动端硬件编解码.md](./10-移动端硬件编解码.md) | Android MediaCodec（缓冲区队列 / CSD / 颜色格式坑 / Surface 零拷贝）/ iOS VideoToolbox（实时编码 / CVPixelBuffer / AVCC↔Annex-B）/ FFmpeg 两端支持边界 / WebRTC 衔接 | 6.5 / 硬件 |
 | [11-H264与H265详解.md](./11-H264与H265详解.md) | 编解码专题（面试导向）：压缩原理（四种冗余）/ H.264 宏块/帧类型/CAVLC-CABAC / H.265 CTU/SAO/WPP/VPS / 全面对比 / 使用场景与授权 / 坑与误区 / 面试速记 + 常考题 | 3.1 |
 | [12-RTMP推流详解.md](./12-RTMP推流详解.md) | RTMP 推流专题（08 推流深挖）：推流全链路 / 握手 C0-C1-C2 / Chunk 分块 / AMF 命令 connect-createStream-publish / 和 FLV Tag 关系 / ffmpeg-C API 推流实战 / 坑与误区 / 面试常考题 | 3.7 |
+| [19-HLS详解.md](./19-HLS详解.md) | HLS 分发专题（08 分发深挖）：m3u8 播放列表 / TS 切片结构 / 自包含切片（核心概念+面试高频）/ FFmpeg 切 HLS / LL-HLS 低延迟 / CMAF fMP4 / 多码率 ABR / 坑与排查 / 面试常考题 | 3.7 |
 | [13-NVIDIA硬件编解码.md](./13-NVIDIA硬件编解码.md) | NVIDIA 专题（07 深挖，面试导向）：NVENC/NVDEC/CUVID 本质 / 代际能力（AV1 分界、并发 session 限制）/ FFmpeg 集成 / P1-P7 preset 与码控 / CUDA interop / DeepStream / 横向对比 + 面试问答 | 3.6 / 硬件 |
 | [14-Android硬件编解码.md](./14-Android硬件编解码.md) | Android 专题（10 深挖，面试导向）：MediaCodec/AMediaCodec / OMX vs Codec2 / 硬软 codec 区分 / 缓冲区队列 + 生命周期状态机 / CSD / 颜色格式坑 / Surface 零拷贝 / 码控 / FFmpeg 边界 + 面试问答 | 6.5 / 硬件 |
 | [15-iOS硬件编解码.md](./15-iOS硬件编解码.md) | iOS/macOS 专题（10 深挖，面试导向）：VideoToolbox 编解码生命周期 / 核心对象 / 实时编码属性 / AVCC↔Annex-B 字节级 / CVPixelBuffer-Metal 零拷贝 / 软硬选择 / FFmpeg 边界 / WebRTC 衔接 + 面试问答 | 6.5 / 硬件 |
@@ -148,9 +152,13 @@
 
 → [08-网络协议与流媒体.md](./08-网络协议与流媒体.md)，第 6 节"四大流媒体协议对比"+ [06-编码参数与码控.md](./06-编码参数与码控.md) 第 5 节"zerolatency"。
 
+### "HLS 切片怎么切？第二个分片为什么也要带 SPS/PPS？怎么降延迟？"
+
+→ [19-HLS详解.md](./19-HLS详解.md)：HLS 全链路（m3u8 + TS + 自包含 + LL-HLS + ABR），面试高频 §二 Q3，自包含核心概念 §3.4，延迟优化 §五。
+
 ### "为什么直播切入新观众有时黑屏？"
 
-→ [05-H264-MP4-NALU.md](./05-H264-MP4-NALU.md)，第 6 节"SPS / PPS 补齐"。
+→ [05-H264-MP4-NALU.md](./05-H264-MP4-NALU.md)，第 6 节"SPS / PPS 补齐" + [19-HLS详解.md](./19-HLS详解.md) §3.4（HLS 自包含切片专题）。
 
 ### "音视频不同步怎么排查？"
 

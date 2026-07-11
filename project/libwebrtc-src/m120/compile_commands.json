@@ -1,0 +1,49 @@
+[
+  {
+    "directory": "/home/bfm01000/workspace/learnffmpeg/project/libwebrtc-src/m120",
+    "file": "modules/rtp_rtcp/source/rtp_packet.cc",
+    "arguments": [
+      "/usr/bin/c++",
+      "-std=c++17",
+      "-I/home/bfm01000/workspace/learnffmpeg/project/libwebrtc-src/m120",
+      "-I/home/bfm01000/workspace/learnffmpeg/project/libwebrtc-src/m120/out/Default/gen",
+      "-I/home/bfm01000/workspace/learnffmpeg/project/libwebrtc-src/m120/third_party/abseil-cpp",
+      "-I/home/bfm01000/workspace/learnffmpeg/project/libwebrtc-src/m120/third_party/boringssl/src/include",
+      "-c",
+      "modules/rtp_rtcp/source/rtp_packet.cc"
+    ]
+  },
+  {
+    "directory": "/home/bfm01000/workspace/learnffmpeg/project/libwebrtc-src/m120",
+    "file": "modules/rtp_rtcp/source/rtp_format_h264.cc",
+    "arguments": [
+      "/usr/bin/c++",
+      "-std=c++17",
+      "-I/home/bfm01000/workspace/learnffmpeg/project/libwebrtc-src/m120",
+      "-c",
+      "modules/rtp_rtcp/source/rtp_format_h264.cc"
+    ]
+  },
+  {
+    "directory": "/home/bfm01000/workspace/learnffmpeg/project/libwebrtc-src/m120",
+    "file": "modules/video_coding/packet_buffer.cc",
+    "arguments": [
+      "/usr/bin/c++",
+      "-std=c++17",
+      "-I/home/bfm01000/workspace/learnffmpeg/project/libwebrtc-src/m120",
+      "-c",
+      "modules/video_coding/packet_buffer.cc"
+    ]
+  },
+  {
+    "directory": "/home/bfm01000/workspace/learnffmpeg/project/libwebrtc-src/m120",
+    "file": "video/rtp_video_stream_receiver2.cc",
+    "arguments": [
+      "/usr/bin/c++",
+      "-std=c++17",
+      "-I/home/bfm01000/workspace/learnffmpeg/project/libwebrtc-src/m120",
+      "-c",
+      "video/rtp_video_stream_receiver2.cc"
+    ]
+  }
+]

@@ -28,6 +28,8 @@
 | 07 | `07-M6-JitterBuffer模块.md` + `code/` | **B 层模块 2** | 抖动估计 + EWMA + 环形 buffer + 12 个 libwebrtc 源码笔记 + 完整 CMake 代码（27 测试） |
 | 08 | `08-SDP真实样本解析.md` | **控制面实战** | 浏览器真实 SDP 逐字段解析 + 面试金句 + 5 道追问 |
 | 09 | `09-面试讲述.md` | 面试包装 | 简历项目段 + 3 分钟自述 + 15 分钟深挖 + 10 道高频题 + 白板预案 |
+| 10 | `10-NTP与RTCP-SR详解.md` | 协议深挖 | NTP 时间格式 / RTCP SR 报文结构 / 音画同步 / RTP→NTP 映射 |
+| 11 | `11-WebRTC-QoS四驾马车-GCC-FEC-NACK-JitterBuffer.md` | **QoS 专题** | GCC/FEC/NACK/JitterBuffer 四技术的底层原理 + 协同流水线 + 12 道面试题 |
 | 99 | `99-学习提示词.md` | 元数据 | 5 阶段执行纲领（A/B 分层硬约束 + 通用规则）|
 | 99 | `99-项目进度存档.md` | 元数据 | **回来时先看这个**——当前进度 / 下一步指引 |
 
@@ -51,6 +53,10 @@
 07 M6 JitterBuffer（精读 + 跑通 27 测试）
    ↓
 08 SDP 真实样本解析（控制面实战，对照真实 SDP 学）
+   ↓
+10 NTP与RTCP-SR（音画同步依赖的时间映射）
+   ↓
+11 QoS 四驾马车（GCC/FEC/NACK/JitterBuffer 全面联动）
    ↓
 09 面试讲述（包装项目，可对外讲）
 ```
