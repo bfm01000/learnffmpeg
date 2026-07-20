@@ -2,7 +2,7 @@
 
 在 iOS/macOS 音视频开发及底层 SDK 开发中，虽然 Swift 越来越流行，但很多底层框架（如 WebRTC 源码、FFmpeg 的封装）以及大厂的核心老业务，依然深度依赖 Objective-C (OC)。面试官考察 OC，核心是看你对 **Runtime（运行时）** 和 **内存管理** 的理解有多深。
 
-## 以下是面试中最常问的 11 个 OC 考点，附带底层原理和可以直接在面试中“背诵”的口语化标准回答。
+## 以下是面试中最常问的 12 个 OC 考点，附带底层原理和可以直接在面试中”背诵”的口语化标准回答。
 
 ---
 
@@ -633,4 +633,336 @@ __weak typeof(self) weakSelf = self;
 > 
 > 线程安全方面：
 > - 我们几乎永远只用 `nonatomic`。因为 `atomic` 虽然会在 setter/getter 内部加锁，但它极其消耗性能，而且根本无法保证真正的多线程业务安全。真正的线程安全应该由我们在业务层手动加锁来控制。”
+
+---
+
+## 考点 12：C++ 线程发出回调时，OC 侧的一般处理流程是什么？
+
+### 场景描述
+
+在音视频 SDK 开发中，最常见的架构是：**C++ 层做核心逻辑（编解码、网络传输），通过 JNI/OC 桥接层回调给上层**。C++ 内部会创建自己的线程（如解码线程、网络线程），回调就是从这些**非主线程**发出的。
+
+问题来了：OC 侧收到回调后，如果涉及更新 UI（展示帧数据、更新进度条等），必须回到主线程。而且 C++ 线程上通常**没有 AutoreleasePool**，直接创建 OC 对象可能导致内存泄漏。
+
+### 标准处理流程
+
+```
+C++ 子线程回调
+    │
+    ├─ ① 确保有 AutoreleasePool（保证临时 OC 对象能正常释放）
+    │
+    ├─ ② 将 C++ 数据转成 OC 对象（NSString / NSData / UIImage 等）
+    │     这一步必须在回调线程完成——C++ 的原始 buffer 可能只在回调期间有效
+    │
+    ├─ ③ 捕获必要的 OC 对象（copy/strong 持有），打包到 block 里
+    │
+    ├─ ④ dispatch_async 到目标队列（主队列或串行队列）
+    │
+    └─ ⑤ 在 block 里做业务处理 + 更新 UI
+```
+
+### 代码示例
+
+#### 场景：C++ 解码线程回调视频帧数据
+
+```objc
+// ===== C++ 侧：SDK 的回调接口（在子线程中调用） =====
+// SDK 通过函数指针或 std::function 回调 OC 侧
+void onVideoFrameCallback(void* userData, const uint8_t* buffer, int width, int height) {
+    // userData 是 OC 对象指针（self），桥梁回来了
+    VideoRenderer* renderer = (__bridge VideoRenderer*)userData;
+    [renderer onVideoFrame:buffer width:width height:height];
+}
+```
+
+```objc
+// ===== OC 侧：处理回调 =====
+@interface VideoRenderer ()
+@property (nonatomic, weak) UIImageView* targetView;  // weak，避免循环引用
+@end
+
+@implementation VideoRenderer
+
+// C++ 线程调用 → 这里已经是 OC 侧了
+- (void)onVideoFrame:(const uint8_t*)buffer width:(int)w height:(int)h {
+    // ① C++ 线程上没有 AutoreleasePool！必须自己包一层
+    @autoreleasepool {
+        // ② 在这里把 C++ 数据转成 OC 对象（必须在 C++ buffer 有效期内完成）
+        NSData* pixelData = [NSData dataWithBytes:buffer length:w * h * 4];
+        // 注意：nsdata 是 autorelease 对象，在 ① 的 pool 里
+
+        // ③ 把 OC 对象打包到 block，dispatch 到主线程
+        //    此时要 copy/strong 持有，不能 weak——block 是唯一的持有者
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self updateUIWithData:pixelData width:w height:h];
+        });
+    }
+    // ④ @autoreleasepool 结束，C++ 线程上的临时 OC 对象被释放
+}
+
+- (void)updateUIWithData:(NSData*)data width:(int)w height:(int)h {
+    // ⑤ 此时已在主线程，可以安全更新 UI
+    UIImage* image = [self imageFromRawData:data width:w height:h];
+    self.targetView.image = image;
+}
+
+@end
+```
+
+### 三个必须注意的坑
+
+#### 坑 1：C++ 线程上没有 AutoreleasePool
+
+**表现**：控制台疯狂打印 `just leaking` 警告，或者内存持续增长不释放。
+
+**原因**：C++ 线程不由 RunLoop 管理，没有系统自动创建的 `AutoreleasePool`。所有 `autorelease` 对象（比如 `[NSData dataWithBytes:]`）找不到池子挂载，直接泄漏。
+
+**解法**：**在 C++ 回调入口的第一行就包 `@autoreleasepool {}`**。
+
+```objc
+// ❌ 漏写 @autoreleasepool，C++ 线程上的 autorelease 对象全部泄漏
+- (void)onCallback:(int)value {
+    NSString* str = [NSString stringWithFormat:@"%d", value];
+    // str 是 autorelease 对象，当前线程没有 Pool → 泄漏
+}
+
+// ✅ 入口第一行就包上
+- (void)onCallback:(int)value {
+    @autoreleasepool {
+        NSString* str = [NSString stringWithFormat:@"%d", value];
+        // ...
+    }
+}
+```
+
+#### 坑 2：数据生命期——在回调线程转 OC 对象，不要跨线程访问 C++ buffer
+
+**表现**：偶现花屏、数据乱码甚至 crash。
+
+**原因**：C++ 回调传入的 `const uint8_t* buffer` 只在回调函数执行期间有效。回调一返回，C++ 侧可能会立即 `free` 或复用这块 buffer。如果把裸指针直接传给 `dispatch_async`，block 执行时 buffer 已失效。
+
+```objc
+// ❌ 错误：把 C++ 裸指针传给异步 block——block 执行时 buffer 已无效
+- (void)onVideoFrame:(const uint8_t*)buffer length:(int)len {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        // 此时 buffer 极大概率已被 C++ 侧释放或覆写！
+        NSData* data = [NSData dataWithBytes:buffer length:len];  // 读到垃圾
+    });
+}
+
+// ✅ 正确：在回调线程里先转成 OC 对象，block 只持有 OC 对象
+- (void)onVideoFrame:(const uint8_t*)buffer length:(int)len {
+    @autoreleasepool {
+        NSData* data = [NSData dataWithBytes:buffer length:len];  // 立即拷贝
+        dispatch_async(dispatch_get_main_queue(), ^{
+            // data 已被 block 强引用，C++ 侧释放 buffer 不影响这里
+            [self processData:data];
+        });
+    }
+}
+```
+
+#### 坑 3：`dispatch_async` 里 `self` 的生命周期
+
+**这个经典问题在 C++ 回调场景下更危险**：C++ SDK 往往持有 OC 对象的裸指针（通过 `(__bridge void*)` 传递），C++ 侧不知道 OC 对象的引用计数状态。
+
+```objc
+// ❌ 风险：dispatch_async 强引用 self
+// 如果 ViewController 已关闭但 C++ 回调还在飞，block 会延长 self 的寿命
+// 更糟的是 self 可能已经被部分清理（viewDidLoad 里的资源已释放）
+
+// ✅ 推荐：Weak-Strong Dance
+- (void)onVideoFrame:(const uint8_t*)buffer length:(int)len {
+    @autoreleasepool {
+        NSData* data = [NSData dataWithBytes:buffer length:len];
+        __weak typeof(self) weakSelf = self;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            __strong typeof(weakSelf) strongSelf = weakSelf;
+            if (!strongSelf) return;  // self 已死，直接放弃
+            [strongSelf processData:data];
+        });
+    }
+}
+```
+
+### 面试速答模板
+
+> "C++ 线程回调到 OC 侧，标准流程分五步：
+>
+> 第一，回调入口第一行包 `@autoreleasepool {}`——因为 C++ 线程不被 RunLoop 管理，没有系统自动创建的释放池，autorelease 对象会泄漏。
+>
+> 第二，在回调线程内立即把 C++ 数据转成 OC 对象（`NSData`、`NSString` 等）——因为 C++ buffer 只在回调执行期间有效，不能把裸指针传给异步 block。
+>
+> 第三，用 Weak-Strong Dance 捕获 `self`，避免延长已不用的 ViewController 的寿命。
+>
+> 第四，`dispatch_async` 到主线程（或目标串行队列）处理业务和更新 UI。
+>
+> 第五，如果 C++ SDK 持有 OC 对象指针（`__bridge` 传递），确保 OC 对象的生命周期由 `shared_ptr` 或显式 retain/release 管理，防止 C++ 侧持有悬空指针。"
+
+### 架构层面的考虑
+
+对于需要频繁回调的场景（如 60fps 视频帧渲染），上面的每次 `dispatch_async` 有性能开销。更优的做法是：
+
+- **OC 侧开启一个专用串行队列**，C++ 回调直接往这个队列里塞数据，避免反复跨线程调度
+- **用 `dispatch_sync` 小心使用**：只有在必须立刻拿到结果（如同步查询）时才用，且一定注意**不能主线程调 `dispatch_sync` 到同一个主队列**（死锁）
+- **环形缓冲 + CADisplayLink**：视频渲染场景下，C++ 线程往环形缓冲写数据，主线程 CADisplayLink 定时读取，双方无锁交互（见 [[01-多线程与锁]]）
+
+---
+
+### 深入：`__bridge` 三兄弟——OC 对象怎么安全地传给 C++ 侧
+
+当 C++ 需要持有 OC 对象的引用作为回调上下文（callback context/userData）时，必须跨越 ARC 的内存管理边界。三个 `__bridge` 关键字各有用处：
+
+#### `__bridge`：只借不转（无所有权转移）
+
+**含义**：仅做类型转换，**不改变引用计数**。ARC 既不 retain 也不 release。
+
+```objc
+// 场景：注册一个"只在此次调用期间有效"的回调
+// C++ 侧不持有 OC 对象，回调结束即失效
+void registerTemporaryCallback() {
+    MyRenderer* renderer = [[MyRenderer alloc] init];
+    // __bridge 只转类型，不传所有权。C++ 侧持有的是"悬空风险"的裸指针
+    cpp_sdk_set_callback(onFrame, (__bridge void*)renderer);
+    // ⚠️ 函数返回后 renderer 可能被 ARC 释放 → C++ 侧指针悬空！
+}
+```
+
+**适用场景**：C++ 侧**不长期持有**，只在这一帧/这一次调用中使用的上下文。生命周期由 OC 侧保证。
+
+#### `__bridge_retained`：转移所有权给 C++（OC → C++，引用计数 +1）
+
+**含义**：类型转换 + **retain**。把 OC 对象交给 C++ 管理，C++ 侧用完后必须手动 `CFRelease` 或再转回来。
+
+```objc
+// 场景：C++ 需要长期持有回调目标（如整个 SDK 生命周期）
+MyRenderer* renderer = [[MyRenderer alloc] init];  // 引用计数 = 1
+
+// __bridge_retained: 转成 void* 同时再 retain → 引用计数 = 2
+void* userData = (__bridge_retained void*)renderer;
+// 现在 OC 侧可以安全释放 renderer，C++ 侧仍持有 +1 的引用
+
+cpp_sdk_register_permanent_callback(onFrame, userData);
+// C++ 伪代码：
+//   void onFrame(void* userData, ...) {
+//       MyRenderer* r = (__bridge MyRenderer*)userData;  // 借回来看
+//       [r doSomething];
+//   }
+//   void unregister() {
+//       // C++ 侧用完，必须把所有权还给 ARC
+//       MyRenderer* r = (__bridge_transfer MyRenderer*)userData;
+//       // __bridge_transfer 把 +1 的所有权交给 ARC
+//       // ARC 在 r 离开作用域时自动 release → 引用计数 -1
+//   }
+```
+
+**核心规则**：`__bridge_retained` 出的 `void*` 已经 +1 了，**C++ 侧必须保证最后有人 `__bridge_transfer` 回来或调 `CFRelease`**，否则泄漏。
+
+#### `__bridge_transfer`：把所有权从 C++ 交还给 ARC（C++ → OC，引用计数 -1 抵消）
+
+**含义**：类型转换 + **release（抵消之前的 retain）**。用来"消化" `__bridge_retained` 多出来的那次引用计数。
+
+**三兄弟对比速查**：
+
+| 关键词 | 引用计数变化 | 所有权方向 | 典型场景 |
+|:---|:---|:---|:---|
+| `__bridge` | 不变 | 不转移 | 临时借用，OC 侧保证生命周期 |
+| `__bridge_retained` | +1 | OC → C++ | C++ 长期持有，用完需 CFRelease 或转回 |
+| `__bridge_transfer` | -1 | C++ → OC | 消化 __bridge_retained 的 +1，交还 ARC |
+
+#### 完整示例：C++ 音频播放器回调 OC
+
+```objc
+// ===== OC 侧：创建播放器并注册回调 =====
+
+@interface AudioPlayer : NSObject
+- (void)start;
+- (void)stop;
+@end
+
+@implementation AudioPlayer {
+    void* _cppPlayer;  // C++ 对象的 opaque 指针
+}
+
+- (instancetype)init {
+    self = [super init];
+    if (self) {
+        // __bridge_retained: 把 self 的所有权传给 C++ 侧一份
+        _cppPlayer = cpp_audio_player_create(onAudioCallback, (__bridge_retained void*)self);
+    }
+    return self;
+}
+
+- (void)start {
+    cpp_audio_player_start(_cppPlayer);
+}
+
+- (void)stop {
+    cpp_audio_player_stop(_cppPlayer);
+}
+
+- (void)dealloc {
+    // 销毁 C++ 对象时，C++ 侧会释放 __bridge_retained 的 OC 指针
+    cpp_audio_player_destroy(_cppPlayer);
+    // C++ destroy 内部: CFRelease(userData) 或 __bridge_transfer 交还
+}
+
+// C++ 回调入口——跑在 C++ 音频线程
+static void onAudioCallback(void* userData, const float* samples, int count) {
+    @autoreleasepool {
+        // __bridge: 只借用，不改变引用计数（所有权在 C++ 侧还有一份）
+        AudioPlayer* self = (__bridge AudioPlayer*)userData;
+        
+        // 转成 OC 数据，dispatch 到主线程
+        NSData* audioData = [NSData dataWithBytes:samples length:count * sizeof(float)];
+        __weak typeof(self) weakSelf = self;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            __strong typeof(weakSelf) strongSelf = weakSelf;
+            if (!strongSelf) return;
+            [strongSelf handleAudioData:audioData];
+        });
+    }
+}
+
+- (void)handleAudioData:(NSData*)data {
+    // 主线程处理
+}
+
+@end
+```
+
+```cpp
+// ===== C++ 侧伪代码 =====
+struct AudioPlayer {
+    void* userData;
+    void (*callback)(void*, const float*, int);
+};
+
+AudioPlayer* cpp_audio_player_create(void (*cb)(void*, const float*, int), void* ctx) {
+    auto* p = new AudioPlayer();
+    p->callback = cb;
+    p->userData = ctx;  // 持有 __bridge_retained 传过来的指针，所有权已 +1
+    return p;
+}
+
+void cpp_audio_player_destroy(AudioPlayer* p) {
+    // 把所有权还给 ARC
+    id obj = (__bridge_transfer id)p->userData;  // ARC 现在接管，会自动 release
+    // obj 离开作用域时 ARC 插入 release → 引用计数 -1
+    delete p;
+}
+```
+
+### 追问：已经有 JNI 的 `NewGlobalRef`/`DeleteGlobalRef` 概念，OC 的 `__bridge` 和它对应吗？
+
+**对应，但机制不同**：
+
+| | Java JNI | OC ARC |
+|:---|:---|:---|
+| 暂借指针 | `(*env)->GetObjectArrayElement(...)` | `__bridge`（不转移所有权） |
+| 长期持有（OC→ 外部） | `(*env)->NewGlobalRef(obj)` | `CFBridgingRetain(obj)` / `（__bridge_retained void*）` |
+| 释放外部持有 | `(*env)->DeleteGlobalRef(ref)` | `CFRelease((CFTypeRef)voidPtr)` / `（__bridge_transfer id）` |
+| 归属谁管 | JVM 管理，手动 GlobalRef | ARC 管理，_retained/_transfer 手动对齐计数 |
+
+**一句话**：JNI 的 GlobalRef = OC 的 `__bridge_retained` + `CFRelease`；JNI 的局部引用 = OC 的 `__bridge` 临时借用。
 

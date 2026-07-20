@@ -1,3 +1,5 @@
+
+
 # Vertical Industry Camera SDK 重构 · 面试讲述文档
 
 > 个人定位：项目主导设计与核心实现（CameraDevice / DisconnectListener 体系 / CameraCaptureService 等）。

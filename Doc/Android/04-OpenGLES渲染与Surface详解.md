@@ -30,6 +30,51 @@ Camera2 / MediaCodec
   [GLSurfaceView / TextureView / SurfaceView]  ←── 最终显示
 ```
 
+### 1.1 每一步的底层原理（逐跳拆解）
+
+上图每一根箭头都不是「把像素抄一份传给下一层」，而是**句柄（handle）在生产者与消费者之间流转**。贯穿始终的机制是 **BufferQueue**（详见 [[#6.1 BufferQueue 与 GraphicBuffer：图像帧的真正流转机制|§6.1]]）：一条环形队列，一端写、一端读，队列里排的是 `GraphicBuffer`（真实像素所在的物理内存），而不是拷贝。
+
+**① `Camera2 / MediaCodec ──output──▶ Surface`：生产者写帧**
+
+- `Surface` 是一条 BufferQueue 的**生产者端点**。它对外暴露的核心动作是 `dequeueBuffer()`（从队列拿一块空闲 `GraphicBuffer`）→ 写入像素 → `queueBuffer()`（把写好的 buffer 排进队列）。
+- Camera2 的 HAL 或 MediaCodec 的硬件解码器，其输出**直接写进 dequeue 出来的 `GraphicBuffer`**（DMA / GPU 写），因此这一步是**零拷贝**——传到下一层的只是这块 buffer 的句柄。
+- 一个 Surface 的最终行为，完全取决于它背后 BufferQueue 的消费者是谁（上屏 / 编码器 / OES 纹理 / CPU），对比见 [[#6.2 Surface 的四种消费者|§6.2]]。
+
+**② `Surface ──包装──▶ SurfaceTexture`：把消费者端接进 GL**
+
+- `new SurfaceTexture(textureId)` 内部**创建了一条 BufferQueue，并把自己注册为消费者端**，同时记住要关联的那个 OES 纹理 id。
+- `new Surface(surfaceTexture)` 则取出**同一条队列的生产者端**，包成 Surface 交给 Camera/MediaCodec。
+- 所以「Surface ↔ SurfaceTexture」本质是**同一条 BufferQueue 的两头**：一头写、一头读。生产者每 `queueBuffer` 一帧，SurfaceTexture 就收到 `onFrameAvailable` 回调。
+
+**③ `SurfaceTexture ──updateTexImage()──▶ OES Texture`：把 buffer 绑成纹理（不拷贝）**
+
+- 在 **GL 线程**调用 `updateTexImage()` 时发生三件事：
+  1. `acquireBuffer()`：从队列取出**最新一帧**的 `GraphicBuffer`（丢弃更旧的，天然做「只显示最新帧」）；
+  2. 把该 buffer 包成 **`EGLImage`**，再通过 `glEGLImageTargetTexture2DOES` **绑定到那个 OES 纹理 id** —— 纹理从此「指向」这块物理内存，**没有像素复制**；
+  3. 锁存 `getTransformMatrix()` 的变换矩阵（旋转/裁剪，来源见 [[#4.1 为什么 SurfaceTexture 需要 transform matrix？|§4.1]]）。
+- 必须在持有 EGL context 的 GL 线程调用，否则纹理绑定无效。
+
+**④ `OES Texture ──samplerExternalOES──▶ Shader`：为什么必须是「外部」纹理**
+
+- 相机/解码器给的 `GraphicBuffer` 格式**不是标准 GL 内部格式**：可能是 YUV（NV12/NV21）、可能是厂商 **tiling** 排布（见 [[#6.3 图像内存排布：stride、plane、tiling|§6.3]]）、也可能是受保护内存。普通 `sampler2D` 读不了。
+- `GL_TEXTURE_EXTERNAL_OES` + `samplerExternalOES` 让驱动在**采样这一刻**由硬件隐式完成：YUV→RGB 色彩转换、de-tiling 重排、必要的对齐处理。这正是它要求 `#extension GL_OES_EGL_image_external : require` 的原因，也带来了它的限制（无 mipmap、不能作 FBO 颜色附件，见 [[#4.3 OES 纹理限制|§4.3]]）。
+- 一句话：**OES 纹理是「外部产生的、非标准格式的 buffer」在 GL 世界里的采样视图**。
+
+**⑤ `Shader ──▶ FBO / 默认 framebuffer`：像素画到哪里**
+
+- Fragment shader 的输出写入**当前绑定的 framebuffer**：
+  - **默认 framebuffer**（`glBindFramebuffer(..., 0)`）= 你的 EGL Window Surface，它本身又是**另一条 BufferQueue 的生产者**，消费者是系统合成器 SurfaceFlinger；
+  - **FBO**（自建离屏帧缓冲）= 画到一张普通纹理上，用于多 pass 滤镜链、美颜等中间结果。
+- 决定「画到哪张纹理」的是 FBO 的 color attachment。
+
+**⑥ `──▶ GLSurfaceView / TextureView / SurfaceView`：上屏**
+
+- 一帧画完后 `eglSwapBuffers()` 把默认 framebuffer 对应的 `GraphicBuffer` **`queueBuffer` 进上屏 BufferQueue**；
+- **SurfaceFlinger** 作为消费者，在 **VSync** 时刻把所有图层（Layer）合成，交给显示硬件（HWC）扫描输出到屏幕。
+- 到这里，一帧从「相机/解码器产生」到「屏幕点亮」，全程流转的都是 `GraphicBuffer` 句柄，理想路径下**无一次 CPU 像素拷贝**。
+
+> 一句话串起来：**每一跳都是「生产者把 GraphicBuffer 排进一条 BufferQueue，消费者取出来接着用」；Surface 是生产端句柄，SurfaceTexture / SurfaceFlinger / 编码器是不同的消费者，OES 纹理只是让 GL 能采样这块外部 buffer 的「视图」。**
+
 ---
 
 ## 二、面试速记

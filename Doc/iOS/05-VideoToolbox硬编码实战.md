@@ -9,6 +9,100 @@
 
 ---
 
+## 零、VideoToolbox 是什么：概念与「全家桶」
+
+> 本节先把 VideoToolbox（下文简称 **VT**）**是什么、在哪一层、由哪些东西组成**讲清楚，再进入编码实战。硬编码/硬解码两篇（05/06）共用这套概念。
+
+### 0.1 一句话定义
+
+**VideoToolbox 是 Apple 在 iOS / macOS / tvOS 上提供的一套底层 C 框架，让你直接调用设备里的专用视频编解码硬件（Media Engine / 编解码 ASIC），对单帧图像做 H.264 / HEVC / ProRes 等的压缩与解压。**
+
+关键词拆开看：
+- **底层**：纯 C API（`VTCompressionSessionCreate` 这种），不是 Objective-C/Swift 对象，需要手动管理引用计数（`CFRelease`）。
+- **硬件**：真正干活的是 SoC 里独立的编解码单元，不占 CPU、不占 GPU 的通用算力，功耗极低、发热小——这正是移动端实时推流必须用它的原因。
+- **单帧**：VT 只负责「一帧图像 ↔ 一段压缩数据」的转换。它**不做封装（mux）、不做网络传输、不做音视频同步**——那些是上层的事。
+
+### 0.2 它在 iOS 媒体栈的位置
+
+```
+┌──────────────────────────────────────────────┐
+│  应用 / SDK 层  (你的推流、RTC、录制逻辑)        │
+├──────────────────────────────────────────────┤
+│  AVFoundation   高层封装                        │
+│   AVCaptureSession(采集) / AVAssetWriter(录制)  │  ← 傻瓜好用，但拿不到逐帧比特流
+│   AVPlayer(播放) / AVAssetReader(读取)          │
+├──────────────────────────────────────────────┤
+│ ▶ VideoToolbox  ← 你在这一层                    │  ← 逐帧、可控、直通硬件
+│   CoreMedia (CMSampleBuffer/CMTime/CMFormatDesc)│
+│   CoreVideo  (CVPixelBuffer/IOSurface)          │
+├──────────────────────────────────────────────┤
+│  硬件驱动 / Media Engine (编解码 ASIC)           │  ← 真正压缩/解压像素的地方
+└──────────────────────────────────────────────┘
+```
+
+- **往上**：AVFoundation 里的 `AVAssetWriter`、`AVCaptureVideoDataOutput` 等其实内部也是调 VT，只是替你把参数、比特流、封装都藏起来了。
+- **往下**：VT 把你的请求翻译成对底层编解码硬件的调用，你不需要碰驱动。
+- **平级**：FFmpeg 的 `h264_videotoolbox` / `h264_vt` 也是对 VT 的封装 wrapper。
+- **一句话**：**VT 是「够底层能逐帧控制、又不用直接写驱动」的那个甜点层。**
+
+### 0.3 「全家桶」：VideoToolbox 到底包含哪些东西
+
+VT 本身很薄，它靠三个框架配合工作。真正要记的是这张「谁负责什么」的表：
+
+| 类别 | 具体对象 | 属于哪个框架 | 干什么 |
+|---|---|---|---|
+| **① 会话 Session**（VT 的核心） | `VTCompressionSession` | VideoToolbox | **编码**：CVPixelBuffer → 压缩数据 |
+| | `VTDecompressionSession` | VideoToolbox | **解码**：压缩数据 → CVPixelBuffer |
+| | `VTPixelTransferSession` | VideoToolbox | 像素**格式转换/缩放**（如 BGRA→NV12） |
+| **② 输入：未压缩帧** | `CVPixelBuffer` | CoreVideo | 一帧原始像素（NV12/BGRA…） |
+| | `CVPixelBufferPool` | CoreVideo | 像素缓冲的**复用池**，避免反复分配 |
+| | `IOSurface` | CoreVideo | 底层可被 GPU/编码器共享的物理内存（**零拷贝**基石） |
+| **③ 输出：压缩帧** | `CMSampleBuffer` | CoreMedia | **一帧压缩数据的容器**（数据+时间+格式） |
+| | `CMBlockBuffer` | CoreMedia | 真正装 H.264/HEVC **字节**的内存块 |
+| | `CMFormatDescription` | CoreMedia | 帧的**格式描述**，编码后 **SPS/PPS 就藏在这里** |
+| | `CMTime` | CoreMedia | 高精度时间戳（PTS/DTS） |
+| **④ 配置/查询** | `VTSessionSetProperty` + `kVT*PropertyKey_*` | VideoToolbox | 设码率/GOP/RealTime/Profile 等**所有参数** |
+| | `VTCopyVideoEncoderList` | VideoToolbox | 查当前设备**支持哪些硬件编码器** |
+| | `VTSessionCopySupportedPropertyDictionary` | VideoToolbox | 查某个 session **支持哪些属性** |
+
+一张图记住数据在这些对象间怎么流（以编码为例）：
+
+```
+CVPixelBuffer (CoreVideo, 未压缩)
+      │  喂给
+      ▼
+VTCompressionSession (VideoToolbox, 调硬件压缩)
+      │  异步回调吐出
+      ▼
+CMSampleBuffer (CoreMedia, 压缩帧容器)
+   ├── CMBlockBuffer         → H.264/HEVC 字节流
+   ├── CMFormatDescription   → SPS/PPS 参数集
+   └── CMTime                → PTS/DTS
+```
+
+> 记忆口诀：**VideoToolbox 出「会话」，CoreVideo 管「进去的原始帧」，CoreMedia 管「出来的压缩帧」。** 三家分工，缺一不可。
+
+### 0.4 VT 能做什么 / 不能做什么（划清边界）
+
+| ✅ VT 负责 | ❌ VT 不负责（上层的事） |
+|---|---|
+| 单帧编码：像素 → H.264/HEVC/ProRes | 封装成 MP4/FLV/TS（那是 muxer 的活） |
+| 单帧解码：压缩数据 → 像素 | 网络推流 RTMP/WebRTC（那是传输层） |
+| 逐帧控码率、强制关键帧、改 GOP | 音频编码（音频走 AudioToolbox） |
+| 像素格式转换/缩放（TransferSession） | 音视频同步、AVCC↔Annex-B 转换 |
+| 直通硬件、零拷贝（配合 IOSurface） | 渲染上屏（那是 Metal/OpenGL 的活） |
+
+**因此一条完整的推流管线是：** `采集(AVFoundation)` → `VT 编码` → `AVCC→Annex-B 转换` → `打包/推流(自己写或用库)`。VT 只是其中一环，但它是决定画质/延迟/功耗的关键一环。
+
+### 0.5 常见误区先打预防针
+
+- **「SPS/PPS 在比特流里」——错。** VT 编码把 SPS/PPS 放在 `CMFormatDescription` 里，不在 `CMBlockBuffer` 数据里，必须单独取出来拼到 Annex-B 流前面（详见 [[07-AVCC与Annex-B转换实战]]）。
+- **「VT 是 Swift/OC 类」——错。** 是 C API + Core Foundation 对象，谁 `Create` 谁 `Release`，漏了就内存泄漏。
+- **「编码是同步的」——错。** `VTCompressionSessionEncodeFrame` 立刻返回，压缩结果在**回调线程**异步吐出；结束前必须 `VTCompressionSessionCompleteFrames` 把管线里残留帧 flush 出来。
+- **「VT 帮我发帧」——错。** 它只给你字节，怎么打包、怎么发全靠你。
+
+---
+
 ## 一、全景导读：VideoToolbox 编码在 iOS 媒体栈的位置
 
 ### 1.1 从场景说起
@@ -644,9 +738,35 @@ CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(fmt, 1, ...); // SPS
 CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(fmt, 2, ...); // PPS
 ```
 
-### 5.2 编码前格式转换（BGRA → NV12）
+### 5.2 编码前格式转换（可选：VT 会自动转，但有更优解）
 
-采集端拿到的可能是 BGRA（如果从 CVPixelBuffer 手动构造），但 VT 编码器期望 NV12。可以用 `VTPixelTransferSession` 做硬件格式转换：
+> ⚠️ **先纠正一个常见误解**：并不是「必须手动把 BGRA 转成 NV12 才能编码」。`VTCompressionSession` 接受多种输入像素格式，BGRA(`kCVPixelFormatType_32BGRA`)通常也被硬件编码器接受——**你喂进去非原生格式时，VT 会在内部自动插入一次转换**（走 GPU/ISP），直接编也不会报错。所以下面这段 `VTPixelTransferSession` **不是功能上必需的**。
+
+**但「能自动转」≠「应该让它自动转」**，隐式转换有代价：
+
+| 做法 | 代价 |
+|---|---|
+| 喂 **NV12**（编码器原生格式） | 无转换，最快、最省电、可零拷贝 |
+| 喂 **BGRA** 让 VT 隐式转 | 多一次 RGB→YUV，吃功耗/延迟，且是看不见的「黑箱」 |
+| 手动 `VTPixelTransferSession` | 自己控转换，但也多一次显式 pass |
+
+**✅ 最佳实践：从编码器给的 PixelBufferPool 拿「对的格式」的缓冲，从源头就不发生转换：**
+
+```objc
+// 从 compression session 拿它「亲儿子」格式的缓冲池
+CVPixelBufferPoolRef pool =
+    VTCompressionSessionGetPixelBufferPool(session);
+
+// 从池里要 buffer——已是编码器要的格式 + IOSurface 背衬(零拷贝)
+CVPixelBufferRef dst;
+CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &dst);
+// 让 Metal 渲染 / 采集 直接写进 dst，再喂给编码器，全程零转换
+```
+
+另外：如果直接从 `AVCaptureVideoDataOutput` 采集，把 `videoSettings` 设成
+`kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange`（NV12），**采集端就直接给 NV12，这一步根本不存在**。BGRA 基本只在「从 Metal/GPU 渲染结果拿帧」时才遇到。
+
+**那 `VTPixelTransferSession` 什么时候才真正需要？** 三种场景：① 编码前要**缩放**（如 1080p 采集编 720p），顺带转格式；② 源格式编码器**确实不接受**，需显式桥接；③ 需要**精确控制色彩范围/矩阵**（video range ↔ full range）。此时才用它：
 
 ```objc
 // 创建转换 session
@@ -659,6 +779,8 @@ VTPixelTransferSessionTransferImage(transferSession,
 ```
 
 这在功能上等价于 FFmpeg 的 `scale_vt` 滤镜。
+
+> **一句话**：优先用 `GetPixelBufferPool` 从源头拿对的格式（零转换）；`VTPixelTransferSession` 只在**要缩放或强控色彩**时才用；实在都没做，VT 也会替你隐式转，只是多花点功耗。
 
 ### 5.3 编码器能力查询
 
