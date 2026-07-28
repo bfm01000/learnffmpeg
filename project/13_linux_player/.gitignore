@@ -1,0 +1,43 @@
+# Build artifacts
+build/
+cmake-build-*/
+out/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Compiled
+*.o
+*.obj
+*.a
+*.so
+*.so.*
+
+# Test
+Testing/
+CTestTestfile.cmake
+Makefile
+CMakeCache.txt
+cmake_install.cmake
+CMakeFiles/
+!cmake/*.cmake
+compile_commands.json
+
+# Core dumps
+core
+*.core
+
+# Package
+*.deb
+*.rpm
+*.tar.*
+*.zip
+
+# Misc
+.DS_Store
+*.log
+*.bak
