@@ -30,7 +30,7 @@ AVSyncEngine::SyncAction AVSyncEngine::syncVideo(std::shared_ptr<Frame> frame)
     }
 
     // TODO: Check frame validity when core/memory/frame.h MediaType conflict is resolved
-    Clock* master = clock_manager_.getMaster();
+    const Clock* master = clock_manager_.getMaster();
     if (!master) {
         return SyncAction::Render;
     }
@@ -66,19 +66,7 @@ int64_t AVSyncEngine::calcDelay(double pts, double master_clock) const
 void AVSyncEngine::setMaster(MasterClockSource source)
 {
     master_source_ = source;
-
-    // Map MasterClockSource to ClockManager::MasterClockType
-    switch (source) {
-        case MasterClockSource::Audio:
-            clock_manager_.setMaster(MasterClockType::Audio);
-            break;
-        case MasterClockSource::System:
-            clock_manager_.setMaster(MasterClockType::Video);
-            break;
-        case MasterClockSource::External:
-            clock_manager_.setMaster(MasterClockType::External);
-            break;
-    }
+    clock_manager_.setMasterSource(source);
 }
 
 void AVSyncEngine::setSyncParams(int64_t max_delay_us, int64_t drop_threshold_us, int64_t tolerance_us)

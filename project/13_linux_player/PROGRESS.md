@@ -45,10 +45,10 @@
 |------|------|----------|----------|------|
 | PacketQueue | ✅ | 2026-07-28 | 2026-07-28 | 19 tests passed |
 | FrameQueue | ⬜ | - | - | |
-| Clock | ⬜ | - | - | |
-| ClockManager | ⬜ | - | - | |
-| EventBus | ⬜ | - | - | |
-| ThreadPool | ⬜ | - | - | |
+| Clock | ✅ | 2026-07-28 | 2026-07-28 | 10 tests |
+| ClockManager | ✅ | 2026-07-28 | 2026-07-28 | 7 tests |
+| EventBus | ✅ | 2026-07-28 | 2026-07-28 | 10 tests |
+| ThreadPool | ✅ | 2026-07-28 | 2026-07-28 | 实现完成 |
 | MemoryPool | ⬜ | - | - | |
 | PluginManager | ⬜ | - | - | |
 
@@ -122,6 +122,7 @@
 | 2026-07-28 | FrameQueue 文档完善 | ✅ 设计理由写到头文件 |
 | 2026-07-28 | ProtocolFactory 实现 | ✅ 13 tests passed |
 | 2026-07-28 | FFmpegDemuxer 实现 | ✅ 14 tests passed |
+| 2026-07-28 | Core 层补齐 (Clock/EventBus/ThreadPool) | ✅ 27 tests, 合计 90 |
 
 ---
 
