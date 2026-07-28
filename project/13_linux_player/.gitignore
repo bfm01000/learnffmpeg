@@ -28,7 +28,7 @@ CMakeFiles/
 compile_commands.json
 
 # Core dumps
-core
+core.[0-9]*
 *.core
 
 # Package
