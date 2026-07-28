@@ -1,41 +1,50 @@
 #pragma once
 
+/// @file ffmpeg_demuxer.h
+/// @brief FFmpeg 解封装器。IMediaSource 的核心实现。
+///
+/// Thread safety:  非线程安全。由 Demux Thread 独占使用。
+///
+/// Ownership:      PlayerController 持有本实例。AVFormatContext 生命周期由本类管理。
+///
+/// Lifecycle:      open(url) → readPacket() 循环 → seekTo() 可选 → close()
+
+#include "source/demuxer/i_media_source.h"
+#include "source/demuxer/stream_info.h"
+#include "source/protocol/i_protocol_handler.h"
+
 #include <memory>
 #include <string>
 #include <vector>
 
-extern "C" {
-#include <libavcodec/avcodec.h>
-#include <libavformat/avformat.h>
-}
-
-#include "i_media_source.h"
-#include "stream_info.h"
-#include "../protocol/i_protocol_handler.h"
+struct AVFormatContext;
 
 namespace player {
 
 class FFmpegDemuxer : public IMediaSource {
 public:
-    FFmpegDemuxer();
-    explicit FFmpegDemuxer(std::unique_ptr<IProtocolHandler> protocol_handler);
-    ~FFmpegDemuxer() override;
+  FFmpegDemuxer();
+  ~FFmpegDemuxer() override;
 
-    int open(const char* url) override;
-    std::shared_ptr<AVPacket> readPacket() override;
-    int seekTo(int64_t pos_ms) override;
-    std::vector<StreamInfo> getStreams() const override;
-    int close() override;
+  // ── IMediaSource ──────────────────────────────────────────────────────
 
-    AVFormatContext* formatContext() const;
+  int    open(const char* url)                  override;
+  std::shared_ptr<AVPacket> readPacket()        override;
+  int    seekTo(int64_t posMs)                  override;
+  std::vector<StreamInfo> getStreams() const    override;
+  int    close()                                override;
+
+  /// 获取底层 AVFormatContext（调试/高级用途）
+  AVFormatContext* formatContext() const { return m_fmtCtx; }
+
+  /// 流数量
+  int streamCount() const { return static_cast<int>(m_streamInfos.size()); }
 
 private:
-    void buildStreamInfos();
+  void buildStreamInfos_();
 
-    AVFormatContext* fmt_ctx_ = nullptr;
-    std::unique_ptr<IProtocolHandler> protocol_handler_;
-    std::vector<StreamInfo> stream_infos_;
-    bool opened_ = false;
+  AVFormatContext*                     m_fmtCtx = nullptr;
+  std::vector<StreamInfo>              m_streamInfos;
 };
 
 } // namespace player

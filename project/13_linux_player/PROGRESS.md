@@ -59,7 +59,7 @@
 | IProtocolHandler | ✅ | - | - | 接口已定义（纯虚类） |
 | ProtocolFactory | ✅ | 2026-07-28 | 2026-07-28 | 13 tests passed |
 | IMediaSource | ⬜ | - | - | 接口已定义 |
-| FFmpegDemuxer | 🔜 | - | - | 当前任务 |
+| FFmpegDemuxer | ✅ | 2026-07-28 | 2026-07-28 | 14 tests passed |
 | FileProtocol | ✅ | 2026-07-28 | 2026-07-28 | 17 tests passed |
 | HTTPProtocol | ⬜ | - | - | |
 | RTMPProtocol | ⬜ | - | - | |
@@ -121,6 +121,7 @@
 | 2026-07-28 | FileProtocol 实现 | ✅ 17 tests passed |
 | 2026-07-28 | FrameQueue 文档完善 | ✅ 设计理由写到头文件 |
 | 2026-07-28 | ProtocolFactory 实现 | ✅ 13 tests passed |
+| 2026-07-28 | FFmpegDemuxer 实现 | ✅ 14 tests passed |
 
 ---
 

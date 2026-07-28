@@ -1,67 +1,143 @@
-#include "ffmpeg_demuxer.h"
+/// @file ffmpeg_demuxer.cpp
+/// @brief FFmpegDemuxer — 基于 FFmpeg 的容器解封装.
+
+#include "source/demuxer/ffmpeg_demuxer.h"
+
+#include <cerrno>
+
+extern "C" {
+#include <libavformat/avformat.h>
+}
 
 namespace player {
 
-FFmpegDemuxer::FFmpegDemuxer() {}
+// ── 辅助: AVMediaType → MediaType ──────────────────────────────────────
 
-FFmpegDemuxer::FFmpegDemuxer(std::unique_ptr<IProtocolHandler> protocol_handler)
-    : protocol_handler_(std::move(protocol_handler)) {}
+MediaType fromAVMediaType(int avType) {
+  switch (avType) {
+    case AVMEDIA_TYPE_VIDEO:    return MediaType::Video;
+    case AVMEDIA_TYPE_AUDIO:    return MediaType::Audio;
+    case AVMEDIA_TYPE_SUBTITLE: return MediaType::Subtitle;
+    default:                    return MediaType::Unknown;
+  }
+}
+
+// ── 生命周期 ────────────────────────────────────────────────────────────
+
+FFmpegDemuxer::FFmpegDemuxer() = default;
 
 FFmpegDemuxer::~FFmpegDemuxer() {
-    close();
+  close();
 }
+
+// ── open ─────────────────────────────────────────────────────────────────
 
 int FFmpegDemuxer::open(const char* url) {
-    // TODO: implement full open logic
-    // 1. If protocol_handler_ is set, use it for custom I/O
-    // 2. Otherwise, let avformat_open_input handle protocol detection
-    // 3. Call avformat_open_input(&fmt_ctx_, url, nullptr, nullptr)
-    // 4. Call avformat_find_stream_info(fmt_ctx_, nullptr)
-    // 5. Populate stream_infos_ via buildStreamInfos()
-    return -1;
+  if (!url || !*url) return -EINVAL;
+
+  // 确保先关闭之前可能打开的资源
+  close();
+
+  // v1: 直接使用 avformat_open_input, FFmpeg 内部处理协议.
+  //     后续通过自定义 AVIO 对接 ProtocolFactory.
+  int ret = avformat_open_input(&m_fmtCtx, url, nullptr, nullptr);
+  if (ret < 0) {
+    m_fmtCtx = nullptr;
+    return ret;
+  }
+
+  // 读取流信息（可能触发网络 IO 读取一部分数据进行分析）
+  ret = avformat_find_stream_info(m_fmtCtx, nullptr);
+  if (ret < 0) {
+    avformat_close_input(&m_fmtCtx);
+    return ret;
+  }
+
+  // 填充流元信息
+  buildStreamInfos_();
+
+  return 0;
 }
+
+// ── readPacket ──────────────────────────────────────────────────────────
 
 std::shared_ptr<AVPacket> FFmpegDemuxer::readPacket() {
-    // TODO: implement packet reading
-    // 1. Allocate AVPacket via av_packet_alloc()
-    // 2. Call av_read_frame(fmt_ctx_, pkt)
-    // 3. On success, return shared_ptr<AVPacket>(pkt, [](AVPacket* p){ av_packet_free(&p); })
-    // 4. On EOF (AVERROR_EOF) or error, free pkt and return nullptr
-    return nullptr;
+  if (!m_fmtCtx) return nullptr;
+
+  AVPacket* pkt = av_packet_alloc();
+  if (!pkt) return nullptr;
+
+  int ret = av_read_frame(m_fmtCtx, pkt);
+  if (ret < 0) {
+    av_packet_free(&pkt);
+    return nullptr;   // EOF 或错误, 上层通过返回值 + errno 判断
+  }
+
+  // shared_ptr + 自定义 deleter: 确保 AVPacket 正确释放
+  return std::shared_ptr<AVPacket>(pkt, [](AVPacket* p) {
+    av_packet_free(&p);
+  });
 }
 
-int FFmpegDemuxer::seekTo(int64_t pos_ms) {
-    // TODO: implement seeking
-    // 1. Convert pos_ms to AV_TIME_BASE
-    // 2. Call av_seek_frame(fmt_ctx_, -1, timestamp, AVSEEK_FLAG_BACKWARD)
-    // 3. Return 0 on success, negative on error
-    return -1;
+// ── seekTo ──────────────────────────────────────────────────────────────
+
+int FFmpegDemuxer::seekTo(int64_t posMs) {
+  if (!m_fmtCtx) return -EBADF;
+
+  int64_t timestamp = av_rescale(posMs, AV_TIME_BASE, 1000);
+
+  // AVSEEK_FLAG_BACKWARD: seek 到目标位置之前最近的关键帧
+  int ret = av_seek_frame(m_fmtCtx, -1, timestamp, AVSEEK_FLAG_BACKWARD);
+  return ret;
 }
+
+// ── getStreams ──────────────────────────────────────────────────────────
 
 std::vector<StreamInfo> FFmpegDemuxer::getStreams() const {
-    return stream_infos_;
+  return m_streamInfos;
 }
+
+// ── close ───────────────────────────────────────────────────────────────
 
 int FFmpegDemuxer::close() {
-    // TODO: implement cleanup
-    // 1. avformat_close_input(&fmt_ctx_) if fmt_ctx_ is not null
-    // 2. Reset state
-    if (fmt_ctx_) {
-        avformat_close_input(&fmt_ctx_);
-        fmt_ctx_ = nullptr;
+  if (m_fmtCtx) {
+    avformat_close_input(&m_fmtCtx);
+    m_fmtCtx = nullptr;
+  }
+  m_streamInfos.clear();
+  return 0;
+}
+
+// ── 内部 ────────────────────────────────────────────────────────────────
+
+void FFmpegDemuxer::buildStreamInfos_() {
+  m_streamInfos.clear();
+  if (!m_fmtCtx) return;
+
+  for (unsigned i = 0; i < m_fmtCtx->nb_streams; ++i) {
+    AVStream* st = m_fmtCtx->streams[i];
+    AVCodecParameters* par = st->codecpar;
+
+    StreamInfo info;
+    info.index    = static_cast<int>(i);
+    info.type     = fromAVMediaType(par->codec_type);
+    info.codecId  = par->codec_id;
+    info.codecName= avcodec_get_name(par->codec_id) ?: "unknown";
+    info.bitrate  = par->bit_rate;
+    info.duration = st->duration > 0
+                    ? av_rescale_q(st->duration, st->time_base, AV_TIME_BASE_Q)
+                    : -1;
+
+    if (par->codec_type == AVMEDIA_TYPE_VIDEO) {
+      info.width  = par->width;
+      info.height = par->height;
+    } else if (par->codec_type == AVMEDIA_TYPE_AUDIO) {
+      info.sampleRate = par->sample_rate;
+      info.channels   = par->ch_layout.nb_channels;
     }
-    stream_infos_.clear();
-    opened_ = false;
-    return 0;
-}
 
-AVFormatContext* FFmpegDemuxer::formatContext() const {
-    return fmt_ctx_;
-}
-
-void FFmpegDemuxer::buildStreamInfos() {
-    // TODO: iterate fmt_ctx_->streams and build StreamInfo entries
-    // Map AVMediaType to MediaType, extract codec parameters
+    m_streamInfos.push_back(info);
+  }
 }
 
 } // namespace player
