@@ -69,9 +69,9 @@
 
 | 模块 | 状态 | 开始日期 | 完成日期 | 备注 |
 |------|------|----------|----------|------|
-| VideoDecoder | ⬜ | - | - | |
+| VideoDecoder | ✅ | 2026-07-29 | 2026-07-29 | 8 tests |
 | HWAccel (VAAPI) | ⬜ | - | - | |
-| AudioDecoder | ⬜ | - | - | |
+| AudioDecoder | ✅ | 2026-07-29 | 2026-07-29 | 6 tests |
 | SubtitleDecoder | ⬜ | - | - | |
 
 ### 3.4 Process（处理层）
@@ -123,6 +123,7 @@
 | 2026-07-28 | ProtocolFactory 实现 | ✅ 13 tests passed |
 | 2026-07-28 | FFmpegDemuxer 实现 | ✅ 14 tests passed |
 | 2026-07-28 | Core 层补齐 (Clock/EventBus/ThreadPool) | ✅ 27 tests, 合计 90 |
+| 2026-07-29 | Decode 层 (VideoDecoder + AudioDecoder) | ✅ 14 tests, 合计 104 |
 
 ---
 

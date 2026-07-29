@@ -1,154 +1,104 @@
-#include "video_decoder.h"
+/// @file video_decoder.cpp
+/// @brief VideoDecoder — 基于 FFmpeg avcodec 的软件视频解码器.
 
-#include <cstdio>
+#include "decode/video_decoder/video_decoder.h"
+
+#include <cerrno>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
-#include <libavutil/avutil.h>
 #include <libavutil/error.h>
 #include <libavutil/frame.h>
-#include <libavutil/hwcontext.h>
-#include <libavutil/pixdesc.h>
 }
 
 namespace player {
 
-// ---------------------------------------------------------------------------
-// Construction / destruction
-// ---------------------------------------------------------------------------
+// ── 生命周期 ────────────────────────────────────────────────────────────
 
-VideoDecoder::VideoDecoder(std::shared_ptr<FrameQueue<AVFrame*>> frame_queue)
-    : frame_queue_(std::move(frame_queue)) {
-}
+VideoDecoder::VideoDecoder() = default;
 
 VideoDecoder::~VideoDecoder() {
+  close();
+}
+
+// ── open ─────────────────────────────────────────────────────────────────
+
+int VideoDecoder::open(AVCodecParameters* codecParams) {
+  if (!codecParams) return -EINVAL;
+
+  // 确保之前的解码器已关闭
+  close();
+
+  // 查找解码器
+  const AVCodec* codec = avcodec_find_decoder(codecParams->codec_id);
+  if (!codec) return AVERROR_DECODER_NOT_FOUND;
+
+  // 分配解码器上下文
+  m_codecCtx = avcodec_alloc_context3(codec);
+  if (!m_codecCtx) return AVERROR(ENOMEM);
+
+  // 拷贝编解码参数
+  int ret = avcodec_parameters_to_context(m_codecCtx, codecParams);
+  if (ret < 0) {
     close();
+    return ret;
+  }
+
+  // 打开解码器（v1: 软件解码, 不传 options）
+  ret = avcodec_open2(m_codecCtx, codec, nullptr);
+  if (ret < 0) {
+    close();
+    return ret;
+  }
+
+  // 分配内部工作帧
+  m_workFrame = av_frame_alloc();
+  if (!m_workFrame) {
+    close();
+    return AVERROR(ENOMEM);
+  }
+
+  return 0;
 }
 
-// ---------------------------------------------------------------------------
-// open
-// ---------------------------------------------------------------------------
-int VideoDecoder::open(AVCodecParameters* codec_params) {
-    // TODO:
-    //   1. If already open, close() first.
-    //
-    //   2. Create codec context via decode_utils::createCodecContext().
-    //      Return error if it fails.
-    //
-    //   3. Allocate internal frame:
-    //        frame_ = av_frame_alloc();
-    //
-    //   4. HW acceleration path:
-    //      a. Query player config for desired HWAccelBackend.
-    //      b. Call tryInitHWAccel() for the requested backend(s).
-    //      c. If HW init succeeds, set is_hw_ = true.
-    //      d. If HW init fails, log warning and fall through to software.
-    //
-    //   5. Open codec:
-    //        ret = avcodec_open2(codec_ctx_, codec_ctx_->codec, nullptr);
-    //
-    //   6. Log decoder info (codec name, pixel format, HW status).
+// ── sendPacket ──────────────────────────────────────────────────────────
 
-    (void)codec_params;
-    return -1; // TODO: implement
-}
-
-// ---------------------------------------------------------------------------
-// sendPacket
-// ---------------------------------------------------------------------------
 int VideoDecoder::sendPacket(AVPacket* pkt) {
-    // TODO:
-    //   return avcodec_send_packet(codec_ctx_, pkt);
-    //
-    //   Handle AVERROR(EAGAIN) — decoder is full, caller should recvFrame first.
-    //   Handle AVERROR(ENOMEM) / other errors appropriately.
-
-    (void)pkt;
-    return -1; // TODO: implement
+  if (!m_codecCtx) return -EBADF;
+  return avcodec_send_packet(m_codecCtx, pkt);
 }
 
-// ---------------------------------------------------------------------------
-// recvFrame
-// ---------------------------------------------------------------------------
+// ── recvFrame ───────────────────────────────────────────────────────────
+
 int VideoDecoder::recvFrame(AVFrame* frame) {
-    // TODO:
-    //   1. ret = avcodec_receive_frame(codec_ctx_, frame_);
-    //
-    //   2. If ret != 0, return ret directly (EAGAIN / EOF / error).
-    //
-    //   3. If is_hw_:
-    //        AVFrame* sw_frame = hw_accel_->getFrame(frame_);
-    //        av_frame_move_ref(frame, sw_frame);
-    //        av_frame_free(&sw_frame);
-    //      Else:
-    //        av_frame_move_ref(frame, frame_);
-    //
-    //   4. Push a clone of the frame to frame_queue_:
-    //        AVFrame* queue_frame = av_frame_clone(frame);
-    //        frame_queue_->pushFrame(queue_frame);
-    //        (If push fails, free the clone so we don't leak.)
-    //
-    //   5. Return 0.
+  if (!m_codecCtx || !frame) return -EINVAL;
 
-    (void)frame;
-    return -1; // TODO: implement
+  int ret = avcodec_receive_frame(m_codecCtx, m_workFrame);
+  if (ret < 0) return ret;
+
+  // 将解码器内部帧的数据移动到调用者提供的帧
+  av_frame_unref(frame);
+  av_frame_move_ref(frame, m_workFrame);
+
+  return 0;
 }
 
-// ---------------------------------------------------------------------------
-// flush
-// ---------------------------------------------------------------------------
+// ── flush ───────────────────────────────────────────────────────────────
+
 void VideoDecoder::flush() {
-    // TODO:
-    //   1. avcodec_flush_buffers(codec_ctx_);
-    //   2. frame_queue_->flush();
-    //
-    //   Note: After flush, sendPacket() must be called again before
-    //   recvFrame() to feed the new GOP.
-
-    // TODO: implement
+  if (m_codecCtx) {
+    avcodec_flush_buffers(m_codecCtx);
+  }
 }
 
-// ---------------------------------------------------------------------------
-// close
-// ---------------------------------------------------------------------------
+// ── close ────────────────────────────────────────────────────────────────
+
 void VideoDecoder::close() {
-    // TODO:
-    //   1. hw_accel_.reset();
-    //   2. av_frame_free(&frame_);
-    //   3. avcodec_free_context(&codec_ctx_);
-    //   4. frame_queue_->flush();
-
-    // TODO: implement
-}
-
-// ---------------------------------------------------------------------------
-// tryInitHWAccel
-// ---------------------------------------------------------------------------
-bool VideoDecoder::tryInitHWAccel(AVCodecContext* ctx, HWAccelBackend backend) {
-    // TODO:
-    //   1. If backend == None, return false.
-    //
-    //   2. Create IHWAccel instance:
-    //        auto accel = IHWAccel::create(backend);
-    //
-    //   3. If !accel, return false.
-    //
-    //   4. Call accel->init(ctx).
-    //      - On success: store accel in hw_accel_, set hw_backend_,
-    //        is_hw_ = true, return true.
-    //      - On failure: log warning, return false.
-    //
-    //   5. Also override the AVCodecContext get_format callback:
-    //        ctx->get_format = [](AVCodecContext*,
-    //                             const AVPixelFormat* fmt) -> AVPixelFormat {
-    //          // Return hw_accel_->getFormat() from the list.
-    //        };
-    //      (C++ lambda can be used, but be careful with lifetime —
-    //       a static-free approach is to store the pointer in ctx->opaque.)
-
-    (void)ctx;
-    (void)backend;
-    return false;
+  av_frame_free(&m_workFrame);
+  if (m_codecCtx) {
+    avcodec_free_context(&m_codecCtx);
+    m_codecCtx = nullptr;
+  }
 }
 
 } // namespace player

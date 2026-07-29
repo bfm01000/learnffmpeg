@@ -1,52 +1,50 @@
 #pragma once
 
-#include <memory>
-
-extern "C" {
-#include <libavcodec/avcodec.h>
-#include <libavutil/frame.h>
-}
+/// @file video_decoder.h
+/// @brief 视频解码器。软件解码, 基于 FFmpeg avcodec send/receive 模型.
+///
+/// Thread safety:  由 Decode Thread 独占使用, 非线程安全.
+///
+/// Lifecycle:      open(codec_params) → sendPacket/recvFrame 循环 → flush/close
+///
+/// ==========================================================================
+/// FFmpeg Send/Receive 模型
+/// ==========================================================================
+///   sendPacket(pkt)  → avcodec_send_packet()  // 喂入压缩数据
+///   recvFrame(frame)  → avcodec_receive_frame() // 取出解码帧
+///
+///   send 和 recv 不是 1:1 的 — 可能 send 多次后才 recv 到一帧（B 帧重排），
+///   也可能 send 一次 recv 多帧。调用者用 AVERROR(EAGAIN) 判断状态.
 
 #include "decode/i_decoder.h"
-#include "decode/video_decoder/hw_accel.h"
-#include "core/queue/frame_queue.h"
+
+struct AVCodecContext;
+struct AVFrame;
 
 namespace player {
 
-/// @brief Software + hardware video decoder.
-///
-/// Decodes H.264 / H.265 / VP9 / AV1 (etc.) video streams.
-/// Supports both pure software decoding and hardware-accelerated decoding
-/// via VAAPI, VDPAU, or CUDA backends.
-///
-/// On each successful recvFrame(), the decoded frame is also pushed to the
-/// shared FrameQueue for consumption by the video renderer pipeline.
 class VideoDecoder : public IDecoder {
 public:
-    /// @param frame_queue  Output queue where decoded frames are pushed.
-    explicit VideoDecoder(std::shared_ptr<FrameQueue<AVFrame*>> frame_queue);
+  VideoDecoder();
+  ~VideoDecoder() override;
 
-    ~VideoDecoder() override;
+  // ── IDecoder ──────────────────────────────────────────────────────────
 
-    // -- IDecoder interface ------------------------------------------------
-    int open(AVCodecParameters* codec_params) override;
-    int sendPacket(AVPacket* pkt) override;
-    int recvFrame(AVFrame* frame) override;
-    void flush() override;
-    void close() override;
+  int  open(AVCodecParameters* codecParams)    override;
+  int  sendPacket(AVPacket* pkt)               override;
+  int  recvFrame(AVFrame* frame)               override;
+  void flush()                                 override;
+  void close()                                 override;
+
+  /// 获取解码器上下文（调试/查询用）
+  AVCodecContext* codecContext() const { return m_codecCtx; }
+
+  /// 查询解码器是否已打开
+  bool isOpen() const { return m_codecCtx != nullptr; }
 
 private:
-    /// Try to initialise HW acceleration for the given codec context.
-    /// Falls back gracefully: returns false without producing an error.
-    bool tryInitHWAccel(AVCodecContext* ctx, HWAccelBackend backend);
-
-    AVCodecContext* codec_ctx_ = nullptr;
-    AVFrame* frame_ = nullptr;                         // reusable internal frame
-    std::shared_ptr<FrameQueue<AVFrame*>> frame_queue_;
-
-    HWAccelBackend hw_backend_ = HWAccelBackend::None;
-    std::unique_ptr<IHWAccel> hw_accel_;
-    bool is_hw_ = false;
+  AVCodecContext* m_codecCtx  = nullptr;
+  AVFrame*        m_workFrame = nullptr;   // 复用的工作帧
 };
 
 } // namespace player
