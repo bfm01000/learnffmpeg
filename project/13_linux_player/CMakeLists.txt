@@ -90,13 +90,19 @@ add_subdirectory(control)
 add_subdirectory(utils)
 
 # ── Public API (header-only) ───────────────────────────────────────────────
-add_library(api INTERFACE)
-target_include_directories(api INTERFACE
-  ${CMAKE_SOURCE_DIR}/api
+add_library(api_obj OBJECT
+  api/player.cpp
 )
+target_include_directories(api_obj PUBLIC
+  ${CMAKE_SOURCE_DIR}/api
+  ${CMAKE_SOURCE_DIR}
+)
+
+add_library(api ALIAS api_obj)
 
 # ── SDK aggregate library ──────────────────────────────────────────────────
 add_library(player_sdk
+  $<TARGET_OBJECTS:api_obj>
   $<TARGET_OBJECTS:core>
   $<TARGET_OBJECTS:source>
   $<TARGET_OBJECTS:decode>

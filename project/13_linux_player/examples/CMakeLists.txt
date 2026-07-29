@@ -15,3 +15,8 @@ add_executable(opengl_player
   opengl_player/main.cpp
 )
 target_link_libraries(opengl_player PRIVATE player_sdk)
+
+add_executable(audio_player
+  audio_player/main.cpp
+)
+target_link_libraries(audio_player PRIVATE player_sdk)
