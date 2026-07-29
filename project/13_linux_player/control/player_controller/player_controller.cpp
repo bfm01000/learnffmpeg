@@ -280,16 +280,17 @@ void PlayerController::audioDecodeLoop_() {
       if (ret == AVERROR(EAGAIN)) break;
       if (ret < 0) break;
 
-      // v1: 跳过重采样, 直接输出解码帧到 SDL renderer
-      // （AudioResampler::convert 在 .so 中有链接问题, 待 fix）
-      m_audioRenderer.render(frame);
-
-      // 更新音频时钟
-      if (frame->pts != AV_NOPTS_VALUE) {
-        double ptsSec = static_cast<double>(frame->pts) *
-                        av_q2d(m_demuxer.formatContext()
-                                   ->streams[m_audioStreamIdx]->time_base);
-        m_clockMgr.audioClock()->setClock(ptsSec);
+      // 重采样 → SDL 渲染
+      AVFrame* resampled = m_audioResampler.convert(frame);
+      if (resampled) {
+        m_audioRenderer.render(resampled);
+        if (resampled->pts != AV_NOPTS_VALUE) {
+          double ptsSec = static_cast<double>(resampled->pts) *
+                          av_q2d(m_demuxer.formatContext()
+                                     ->streams[m_audioStreamIdx]->time_base);
+          m_clockMgr.audioClock()->setClock(ptsSec);
+        }
+        av_frame_free(&resampled);
       }
 
       av_frame_unref(frame);

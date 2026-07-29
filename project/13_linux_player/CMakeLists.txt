@@ -32,9 +32,11 @@ option(ENABLE_LTO           "Enable link-time optimization" OFF)
 # ── Find dependencies ──────────────────────────────────────────────────────
 find_package(PkgConfig REQUIRED)
 
-# FFmpeg
+# FFmpeg — force system install to avoid /usr/local ABI conflicts
+set(ENV{PKG_CONFIG_PATH} "/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig")
 pkg_check_modules(FFMPEG REQUIRED
-  libavformat libavcodec libavutil libswscale libswresample libavfilter)
+  libavformat libavcodec libavutil libswscale libswresample)
+unset(ENV{PKG_CONFIG_PATH})
 
 # SDL2
 pkg_check_modules(SDL2 REQUIRED sdl2)
