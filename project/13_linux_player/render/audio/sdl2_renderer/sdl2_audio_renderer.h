@@ -1,61 +1,74 @@
 #pragma once
 
-#include <memory>
+/// @file sdl2_audio_renderer.h
+/// @brief SDL2 音频渲染器。SDL callback 从 AudioRingBuffer 取 PCM 播放.
+///
+/// Thread safety:  render() 由 Audio Decode Thread 调用,
+///                 SDL callback 由 SDL 内部线程调用,
+///                 AudioRingBuffer 保证两者的无锁安全.
+///
+/// ==========================================================================
+/// 时钟
+/// ==========================================================================
+///   每次 SDL callback 消费数据后更新 audio_clock.
+///   audio_clock = 已播放的总采样数 / 采样率.
+///   通过 getAudioClock() 暴露, AVSyncEngine 用它做 Master Clock.
+///
+/// ==========================================================================
+/// 延迟打开
+/// ==========================================================================
+///   设备在首次 render() 时根据帧参数延迟打开。init() 仅创建 ring buffer.
 
 #include "render/i_renderer.h"
-#include "audio_ring_buffer.h"
+#include "render/audio/sdl2_renderer/audio_ring_buffer.h"
 
 #include <SDL2/SDL.h>
-
-extern "C" {
-#include <libavutil/frame.h>
-}
+#include <atomic>
+#include <memory>
 
 namespace player {
 
-/// @brief SDL2-based audio renderer implementing IRenderer.
-///        Opens an SDL audio device, registers a callback that reads
-///        from AudioRingBuffer, performs sample format conversion / mixing,
-///        and tracks the audio clock for A/V sync.
 class SDL2AudioRenderer : public IRenderer {
 public:
-    SDL2AudioRenderer();
-    ~SDL2AudioRenderer() override;
+  SDL2AudioRenderer();
+  ~SDL2AudioRenderer() override;
 
-    SDL2AudioRenderer(const SDL2AudioRenderer&) = delete;
-    SDL2AudioRenderer& operator=(const SDL2AudioRenderer&) = delete;
-    SDL2AudioRenderer(SDL2AudioRenderer&&) = delete;
-    SDL2AudioRenderer& operator=(SDL2AudioRenderer&&) = delete;
+  SDL2AudioRenderer(const SDL2AudioRenderer&) = delete;
+  SDL2AudioRenderer& operator=(const SDL2AudioRenderer&) = delete;
+  SDL2AudioRenderer(SDL2AudioRenderer&&) = delete;
+  SDL2AudioRenderer& operator=(SDL2AudioRenderer&&) = delete;
 
-    // IRenderer interface
-    int init(const RenderConfig& cfg) override;
-    int render(AVFrame* frame) override;
-    void resize(int w, int h) override;
-    void destroy() override;
+  // ── IRenderer ────────────────────────────────────────────────────────
 
-    /// @brief Pause audio playback.
-    void pause();
+  int  init(const RenderConfig& cfg) override;
+  int  render(AVFrame* frame) override;
+  void resize(int w, int h) override;   // 音频无需 resize, 空实现
+  void destroy() override;
 
-    /// @brief Resume audio playback.
-    void resume();
+  // ── 音频控制 ──────────────────────────────────────────────────────────
 
-    /// @brief Get the current audio clock value (in seconds).
-    double getAudioClock() const;
+  void pause();
+  void resume();
+
+  /// 获取当前播放位置（秒）, 由 SDL callback 更新.
+  double getAudioClock() const { return m_audioClock.load(std::memory_order_acquire); }
 
 private:
-    SDL_AudioDeviceID audio_device_id_{0};
-    SDL_AudioSpec      audio_spec_;
+  /// 根据帧参数（首次打开时使用）打开 SDL 设备
+  int openDevice_(AVFrame* frame);
 
-    std::unique_ptr<AudioRingBuffer> ring_buffer_;
+  /// SDL 音频回调 — 从 RingBuffer 取数据喂给 SDL
+  static void sdlCallback_(void* userdata, Uint8* stream, int len);
+  void onAudioCallback_(Uint8* stream, int len);
 
-    // Audio clock: tracks the playback timestamp.
-    double audio_clock_{0.0};
+  SDL_AudioDeviceID          m_deviceId = 0;
+  std::unique_ptr<AudioRingBuffer> m_ringBuffer;
+  std::atomic<double>        m_audioClock{0.0};
+  std::atomic<bool>          m_paused{false};
 
-    // Callback is a static function; we store 'this' to dispatch.
-    static void audioCallback(void* userdata, Uint8* stream, int len);
-
-    /// @brief Internal callback handler called from the static wrapper.
-    void onAudioCallback(Uint8* stream, int len);
+  int m_sampleRate = 0;
+  int m_channels   = 0;
+  int m_bytesPerSample = 0;    // 每帧采样字节数（用于时钟计算）
 };
 
 } // namespace player

@@ -38,6 +38,7 @@ add_unit_test(test_demuxer)
 add_unit_test(test_video_decoder)
 add_unit_test(test_audio_decoder)
 add_unit_test(test_audio_resampler)
+add_unit_test(test_audio_ring_buffer)
 add_unit_test(test_seek_handler)
 
 # ── Integration tests ────────────────────────────────────────────────────────

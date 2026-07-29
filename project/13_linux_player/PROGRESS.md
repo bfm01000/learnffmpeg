@@ -79,7 +79,7 @@
 | 模块 | 状态 | 开始日期 | 完成日期 | 备注 |
 |------|------|----------|----------|------|
 | FilterGraph | ⬜ | - | - | |
-| AudioResampler | ⬜ | - | - | |
+| AudioResampler | ✅ | 2026-07-29 | 2026-07-29 | 4 tests |
 | ColorConverter | ⬜ | - | - | |
 
 ### 3.5 Render（渲染层）
@@ -87,7 +87,7 @@
 | 模块 | 状态 | 开始日期 | 完成日期 | 备注 |
 |------|------|----------|----------|------|
 | OpenGLRenderer | ⬜ | - | - | |
-| SDL2AudioRenderer | ⬜ | - | - | |
+| SDL2AudioRenderer | ✅ | 2026-07-29 | 2026-07-29 | 延迟打开, ring buffer |
 | SubtitleRenderer | ⬜ | - | - | |
 
 ### 3.6 Control（控制层）
