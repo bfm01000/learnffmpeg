@@ -1,6 +1,6 @@
 # 工作日志
 
-## 2026-07-29 ~ 2026-07-30 Control 层实现 & 音视频管线调试
+## 2026-07-29 ~ 2026-07-31 Control 层实现 & 音视频管线调试
 
 ### 概述
 完成了 Control 层 5 个模块（StateMachine/AVSyncEngine/SeekHandler/PlayerController/PlaylistManager），并解决了三个关键的运行时问题。
@@ -266,3 +266,60 @@ video #50 T+7084ms pts=16480ms fq=5/5 ← 7 秒后才产生新帧!
 - 解码线程自旋 sleep 从 500µs 降到 200µs（减少空转损失）
 - 新增 `LOGD_*` 通道化日志宏，支持 per-tag 过滤
 - `minimal_audio`/`minimal_av` 诊断 demo 程序
+
+---
+
+## 2026-07-28 ~ 2026-07-29 工程搭建 & Core/Source/Decode 层
+
+### 2026-07-28 工程搭建
+- 架构设计 → ARCHITECTURE.md
+- 工程脚手架: 120 桩文件 + CMake + GoogleTest
+- CLAUDE.md: 21 条 AI 工程规范
+
+### 2026-07-28 Core 层
+- PacketQueue (19 tests): Bounded MPSC, flush token + serial
+- FrameQueue: 设计文档完善（无 condvar 理由）
+- Clock + ClockManager (17 tests)
+- EventBus (10 tests)
+- ThreadPool
+
+### 2026-07-28 Source 层
+- FileProtocol (17 tests): POSIX I/O
+- ProtocolFactory (13 tests): URL scheme 路由
+- FFmpegDemuxer (14 tests): avformat 封装
+
+### 2026-07-28~29 Decode + Process + Render
+- VideoDecoder (8 tests), AudioDecoder (6 tests)
+- AudioResampler (4 tests): libswresample 封装
+- AudioRingBuffer (7 tests): SPSC 无锁环形缓冲
+- SDL2AudioRenderer: 延迟打开 SDL 设备
+
+### 2026-07-29 PlayerController + FFmpeg 修复
+- PlayerController: 端到端音频管线 (Demux→Decode→Resample→SDL2)
+- 修复 `.gitignore` 的 `core` 规则吞掉整个 core/ 目录
+- 修复 FFmpeg 7.x/6.1 双版本 ABI 冲突: CMake PKG_CONFIG_PATH 强制系统路径
+
+### FFmpeg 双版本问题详情
+- 症状: av_frame_get_buffer / av_samples_alloc 返回 EINVAL(-22)
+- 根因: `/usr/local` 的 FFmpeg 7.x 和系统 FFmpeg 6.1 的 .so 同时链接
+- 解决: CMake 中 `set(ENV{PKG_CONFIG_PATH} /usr/lib/x86_64-linux-gnu/pkgconfig)` 强制系统 pkg-config
+
+### 2026-07-29 视频管线尝试（未完成）
+- 从源码构建 GLFW 3.4 → `external/glfw/build/src/libglfw3.a`
+- 实现 OpenGL 渲染器（gl_context / shader_program / texture_manager / opengl_renderer）
+- 问题: OpenGL 3.3 函数需要 GLEW/GLAD 加载，环境未安装且无 sudo
+- 切换方案: 改用 SDL2 做视频渲染 (`sdl_video_renderer.h/.cpp`)
+- SDL2 视频渲染器编译通过
+- 端到端测试 `full_player` 崩溃，尚未定位根因
+
+### 当前状态
+- ✅ 音频完整链路: Demux→Decode→Resample→SDL2 Audio→扬声器
+- ✅ 115 单元测试全部通过
+- ✅ FFmpeg 版本冲突已解决
+- ❌ 视频管线: Decoder + SDL Renderer 已实现，集成后 crash
+- ❌ full_player 崩溃待定位
+
+### 下一步
+1. 定位 full_player 崩溃根因
+2. 修复后验证音视频同步播放
+3. 实现 AVSync（音频 Master Clock → 视频帧同步）

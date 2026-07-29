@@ -88,7 +88,7 @@
 |------|------|----------|----------|------|
 | OpenGLRenderer | ✅* | - | - | 已实现但未接入编译（缺 GLFW） |
 | SDL2AudioRenderer | ✅ | 2026-07-29 | 2026-07-29 | 延迟打开, ring buffer；已接线 ClockManager |
-| SDLVideoRenderer | ✅ | 2026-07-29 | 2026-07-29 | SDL2 YUV 直接渲染 |
+| SDLVideoRenderer | ✅ | 2026-07-29 | 2026-07-29 | SDL2 YUV 直接渲染，集成crash已修复 |
 | SubtitleRenderer | ⬜ | - | - | |
 
 ### 3.6 Control（控制层）
@@ -124,6 +124,8 @@
 | 2026-07-28 | FFmpegDemuxer 实现 | ✅ 14 tests passed |
 | 2026-07-28 | Core 层补齐 (Clock/EventBus/ThreadPool) | ✅ 27 tests, 合计 90 |
 | 2026-07-29 | Decode 层 (VideoDecoder + AudioDecoder) | ✅ 14 tests, 合计 104 |
+| 2026-07-29 | PlayerController 端到端音频 | ✅ 音频链路通 |
+| 2026-07-29 | FFmpeg 双版本冲突修复 | ✅ PKG_CONFIG_PATH |
 | 2026-07-29 | Control 层完整实现 | ✅ StateMachine + AVSyncEngine + SeekHandler + PlayerController v3 |
 | 2026-07-29 | Frame.h MediaType 冲突修复 | ✅ 移除重复 enum, 统一用 api/player_types.h |
 | 2026-07-29 | EventType 扩展 | ✅ 新增 Open/Retry/Stopped/SeekComplete 事件 |
