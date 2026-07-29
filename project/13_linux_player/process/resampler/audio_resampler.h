@@ -1,44 +1,41 @@
 #pragma once
 
-#include <memory>
+/// @file audio_resampler.h
+/// @brief 音频重采样器。封装 libswresample, 将解码 PCM 转为目标格式.
 
-extern "C" {
-#include <libavutil/frame.h>
-#include <libavutil/samplefmt.h>
-#include <libswresample/swresample.h>
-}
+#include <cstdint>
+
+struct AVFrame;
+struct SwrContext;
 
 namespace player {
 
 class AudioResampler {
 public:
-    AudioResampler();
-    ~AudioResampler();
+  AudioResampler();
+  ~AudioResampler();
 
-    AudioResampler(const AudioResampler&) = delete;
-    AudioResampler& operator=(const AudioResampler&) = delete;
-    AudioResampler(AudioResampler&&) = delete;
-    AudioResampler& operator=(AudioResampler&&) = delete;
+  AudioResampler(const AudioResampler&) = delete;
+  AudioResampler& operator=(const AudioResampler&) = delete;
+  AudioResampler(AudioResampler&&) = delete;
+  AudioResampler& operator=(AudioResampler&&) = delete;
 
-    /// @brief Initialize the resampler with input and output audio parameters.
-    /// @return 0 on success, negative AVERROR on failure.
-    int init(int in_sample_rate, AVSampleFormat in_fmt, int in_channels,
-             int out_sample_rate, AVSampleFormat out_fmt, int out_channels);
+  /// @return 0 成功, <0 FFmpeg 错误码.
+  int init(int inSampleRate, int inFormat, int inChannels,
+           int outSampleRate, int outFormat, int outChannels);
 
-    /// @brief Convert a single audio frame.
-    /// @param in_frame  Input AVFrame (planar or interleaved).
-    /// @return A newly allocated AVFrame with resampled data, or nullptr on error.
-    AVFrame* convert(AVFrame* in_frame);
+  /// @return 新分配 AVFrame*（调用者 av_frame_free）, nullptr 失败.
+  AVFrame* convert(AVFrame* inFrame);
 
-    /// @brief Drain any remaining buffered samples from the resampler.
-    /// @return A frame with remaining samples, or nullptr when fully flushed.
-    AVFrame* flush();
-
-    /// @brief Close and release the resampler context.
-    void close();
+  AVFrame* flush();
+  void close();
+  bool isOpen() const { return m_swrCtx != nullptr; }
 
 private:
-    SwrContext* swr_ctx_{nullptr};
+  SwrContext* m_swrCtx     = nullptr;
+  int         m_outRate    = 0;
+  int         m_outFormat  = -1;
+  int         m_outChannels = 0;
 };
 
 } // namespace player

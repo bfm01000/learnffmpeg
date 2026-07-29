@@ -374,7 +374,7 @@ Demux ──[PacketQueue(Video)]──► VideoDecoder ──[FrameQueue(Video)]
 └─────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────┐
-│          PacketQueue<T>                  │  Bounded MPSC
+│          PacketQueue<T>                 │  Bounded MPSC
 ├─────────────────────────────────────────┤
 │ - buffer_: ring_buffer<T>               │
 │ - capacity_: size_t                     │
@@ -391,7 +391,7 @@ Demux ──[PacketQueue(Video)]──► VideoDecoder ──[FrameQueue(Video)]
 └─────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────┐
-│            FrameQueue                    │  Bounded SPSC
+│            FrameQueue                   │  Bounded SPSC
 ├─────────────────────────────────────────┤
 │ - frames_: array<shared_ptr<Frame>, N>  │
 │ - write_idx_: atomic<size_t>            │
