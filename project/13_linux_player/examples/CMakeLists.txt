@@ -20,3 +20,8 @@ add_executable(audio_player
   audio_player/main.cpp
 )
 target_link_libraries(audio_player PRIVATE player_sdk)
+
+add_executable(full_player
+  full_player/main.cpp
+)
+target_link_libraries(full_player PRIVATE player_sdk)

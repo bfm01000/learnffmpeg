@@ -1,74 +1,75 @@
-#include "opengl_renderer.h"
-
-#include <thread>
-#include <chrono>
+#include "render/video/opengl_renderer/opengl_renderer.h"
+#include <GL/gl.h>
+#include <cstdio>
+extern "C" {
+#include <libavutil/frame.h>
+#include <libavutil/pixdesc.h>
+}
 
 namespace player {
 
 OpenGLRenderer::OpenGLRenderer() = default;
-
-OpenGLRenderer::~OpenGLRenderer() {
-    destroy();
-}
+OpenGLRenderer::~OpenGLRenderer() { destroy(); }
 
 int OpenGLRenderer::init(const RenderConfig& cfg) {
-    // TODO: Create GLContext with cfg.width, cfg.height, cfg.title.
-    //       Initialize GLEW.
-    //       Create ShaderProgram, load YUV->RGB shaders.
-    //       Create TextureManager.
-    //       Call setupQuad() to build fullscreen quad VBO/VAO.
-    //       Store window_w_ / window_h_.
-    return 0;
+  int w=cfg.width>0?cfg.width:1280;
+  int h=cfg.height>0?cfg.height:720;
+  if(!m_gl.create(w,h,cfg.title?cfg.title:"Player SDK")) return -1;
+  if(!m_shader.compile(nullptr,nullptr)) return -1;
+  setupQuad_();
+  m_inited=true;
+  return 0;
+}
+
+void OpenGLRenderer::setupQuad_() {
+  // fullscreen quad: pos + texcoord
+  float v[]={ -1,-1, 0,1,  1,-1, 1,1,  1,1, 1,0,  -1,-1, 0,1,  1,1, 1,0,  -1,1, 0,0 };
+  glGenVertexArrays(1,&m_vao); glGenBuffers(1,&m_vbo);
+  glBindVertexArray(m_vao);
+  glBindBuffer(GL_ARRAY_BUFFER,m_vbo);
+  glBufferData(GL_ARRAY_BUFFER,sizeof(v),v,GL_STATIC_DRAW);
+  glVertexAttribPointer(0,2,GL_FLOAT,GL_FALSE,4*sizeof(float),(void*)0); glEnableVertexAttribArray(0);
+  glVertexAttribPointer(1,2,GL_FLOAT,GL_FALSE,4*sizeof(float),(void*)(2*sizeof(float))); glEnableVertexAttribArray(1);
+  glBindVertexArray(0);
 }
 
 int OpenGLRenderer::render(AVFrame* frame) {
-    // TODO:
-    //   1. Calculate PTS delay from frame->pts and last_pts_.
-    //   2. If delay > 0, wait (std::this_thread::sleep_for or busy-wait).
-    //   3. Call uploadFrame(frame) to push data to GPU.
-    //   4. Call glClear(), then drawFrame().
-    //   5. Swap buffers with gl_context_->swapBuffers().
-    //   6. Poll events with glfwPollEvents().
-    //   7. Update last_pts_ = frame->pts.
-    return 0;
+  if(!m_inited||!frame||!frame->data[0]) return -1;
+  if(m_gl.shouldClose()) return -2;
+
+  glClearColor(0,0,0,1); glClear(GL_COLOR_BUFFER_BIT);
+
+  // Upload YUV420P
+  int w=frame->width, h=frame->height;
+  const uint8_t* y=frame->data[0]; const uint8_t* u=frame->data[1]; const uint8_t* v=frame->data[2];
+  int yStride=frame->linesize[0], uStride=frame->linesize[1], vStride=frame->linesize[2];
+
+  if(!m_tex.uploadYUV420P(y,yStride,u,uStride,v,vStride,w,h)) return -1;
+
+  // Draw
+  m_shader.use();
+  m_shader.setUniform1i("uTexY",0); m_shader.setUniform1i("uTexU",1); m_shader.setUniform1i("uTexV",2);
+  m_tex.bind(0,1,2);
+
+  glBindVertexArray(m_vao);
+  glDrawArrays(GL_TRIANGLES,0,6);
+  glBindVertexArray(0);
+
+  m_gl.swapBuffers();
+  m_gl.pollEvents();
+  return 0;
 }
 
 void OpenGLRenderer::resize(int w, int h) {
-    // TODO: Update window_w_ / window_h_, call glViewport().
+  glViewport(0,0,w,h);
 }
 
 void OpenGLRenderer::destroy() {
-    // TODO: Delete VAO/VBO, destroy TextureManager, ShaderProgram, GLContext.
+  if(m_vao) glDeleteVertexArrays(1,&m_vao);
+  if(m_vbo) glDeleteBuffers(1,&m_vbo);
+  m_vao=m_vbo=0; m_inited=false;
+  m_gl.destroy();
 }
 
-int OpenGLRenderer::setupQuad() {
-    // TODO: Create VAO and VBO for a fullscreen quad (two triangles).
-    //       Vertex format: position (vec2) + texcoord (vec2).
-    return 0;
+bool OpenGLRenderer::shouldClose() const { return m_gl.shouldClose(); }
 }
-
-int OpenGLRenderer::compileShaders() {
-    // TODO: Optionally embed or load YUV-to-RGB vertex/fragment shaders
-    //       via shader_program_->loadFromFile().
-    return 0;
-}
-
-int OpenGLRenderer::uploadFrame(AVFrame* frame) {
-    // TODO: Based on frame->format, call texture_manager_->uploadYUV420P()
-    //       or uploadNV12().
-    return 0;
-}
-
-void OpenGLRenderer::drawFrame() {
-    // TODO: glBindVertexArray(vao_);
-    //       glActiveTexture + glBindTexture for each plane,
-    //       set shader uniforms, glDrawArrays(GL_TRIANGLE_STRIP, 0, 4).
-}
-
-void OpenGLRenderer::syncPts(double pts) {
-    // TODO: Compute delay = (pts - last_pts_) * time_base.
-    //       If delay > 0, sleep for the calculated duration.
-    //       Update clock_reference_ if needed.
-}
-
-} // namespace player

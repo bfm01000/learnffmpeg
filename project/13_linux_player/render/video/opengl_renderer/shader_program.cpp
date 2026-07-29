@@ -1,62 +1,50 @@
-#include "shader_program.h"
-
-#include <fstream>
-#include <sstream>
-#include <iostream>
+#include "render/video/opengl_renderer/shader_program.h"
+#include <GL/gl.h>
+#include <cstdio>
+#include <cstring>
 
 namespace player {
 
-ShaderProgram::ShaderProgram() = default;
+static const char* kYuvToRgbVs = R"(#version 330 core
+layout(location=0) in vec2 aPos; layout(location=1) in vec2 aTexCoord;
+out vec2 vTexCoord;
+void main(){ gl_Position=vec4(aPos,0.0,1.0); vTexCoord=aTexCoord; })";
 
-ShaderProgram::~ShaderProgram() {
-    if (program_) {
-        glDeleteProgram(program_);
-    }
+static const char* kYuvToRgbFs = R"(#version 330 core
+in vec2 vTexCoord; out vec4 fragColor;
+uniform sampler2D uTexY,uTexU,uTexV;
+void main(){
+  float y=texture(uTexY,vTexCoord).r;
+  float u=texture(uTexU,vTexCoord).r-0.5;
+  float v=texture(uTexV,vTexCoord).r-0.5;
+  float r=y+1.402*v; float g=y-0.344*u-0.714*v; float b=y+1.772*u;
+  fragColor=vec4(r,g,b,1.0); })";
+
+ShaderProgram::~ShaderProgram() { if(m_id) glDeleteProgram(m_id); }
+
+bool ShaderProgram::compile(const char* vsSrc, const char* fsSrc) {
+  unsigned vs=compileShader_(GL_VERTEX_SHADER, vsSrc?vsSrc:kYuvToRgbVs);
+  unsigned fs=compileShader_(GL_FRAGMENT_SHADER, fsSrc?fsSrc:kYuvToRgbFs);
+  if(!vs||!fs) { if(vs)glDeleteShader(vs); if(fs)glDeleteShader(fs); return false; }
+  m_id=glCreateProgram();
+  glAttachShader(m_id,vs); glAttachShader(m_id,fs);
+  glLinkProgram(m_id);
+  GLint ok; glGetProgramiv(m_id,GL_LINK_STATUS,&ok);
+  if(!ok){ char log[512]; glGetProgramInfoLog(m_id,512,nullptr,log); fprintf(stderr,"Shader link: %s\n",log); }
+  glDeleteShader(vs); glDeleteShader(fs);
+  return ok;
 }
 
-ShaderProgram::ShaderProgram(ShaderProgram&& other) noexcept
-    : program_(other.program_) {
-    other.program_ = 0;
-}
+void ShaderProgram::use() const { glUseProgram(m_id); }
+int  ShaderProgram::uniformLoc(const char* n) const { return glGetUniformLocation(m_id,n); }
+void ShaderProgram::setUniform1i(const char* n, int v) const { glUniform1i(uniformLoc(n),v); }
 
-ShaderProgram& ShaderProgram::operator=(ShaderProgram&& other) noexcept {
-    if (this != &other) {
-        if (program_) glDeleteProgram(program_);
-        program_ = other.program_;
-        other.program_ = 0;
-    }
-    return *this;
+unsigned ShaderProgram::compileShader_(unsigned type, const char* src) {
+  unsigned s=glCreateShader(type);
+  glShaderSource(s,1,&src,nullptr);
+  glCompileShader(s);
+  GLint ok; glGetShaderiv(s,GL_COMPILE_STATUS,&ok);
+  if(!ok){ char log[512]; glGetShaderInfoLog(s,512,nullptr,log); fprintf(stderr,"Shader %u: %s\n",type,log); glDeleteShader(s); return 0; }
+  return s;
 }
-
-int ShaderProgram::loadFromFile(const std::string& vs_path, const std::string& fs_path) {
-    // TODO: Read sources with readFile(), compile each with compileShader(),
-    //       create program with glCreateProgram(), attach shaders, link,
-    //       check link status, detach and delete shader objects.
-    return 0;
 }
-
-void ShaderProgram::use() {
-    // TODO: Call glUseProgram(program_).
-}
-
-void ShaderProgram::setUniform(const std::string& name, const float* mat4_ptr) {
-    // TODO: Call glUniformMatrix4fv(location, 1, GL_FALSE, mat4_ptr).
-}
-
-GLint ShaderProgram::getAttribLocation(const std::string& name) {
-    // TODO: Return glGetAttribLocation(program_, name.c_str()).
-    return -1;
-}
-
-GLuint ShaderProgram::compileShader(GLenum type, const std::string& source) {
-    // TODO: Call glCreateShader(), glShaderSource(), glCompileShader(),
-    //       check compile status, return shader id.
-    return 0;
-}
-
-std::string ShaderProgram::readFile(const std::string& path) {
-    // TODO: Open file, read into std::string, return.
-    return {};
-}
-
-} // namespace player

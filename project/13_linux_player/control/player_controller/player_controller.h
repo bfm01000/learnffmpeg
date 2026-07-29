@@ -1,22 +1,7 @@
 #pragma once
 
-/// @file player_controller.h
-/// @brief 播放器中央控制器 — IPlayer 实现, 串联所有模块.
-///
-/// ==========================================================================
-/// 当前能力（v1, 音频优先）
-/// ==========================================================================
-///   完整音频链路: Demux → PacketQueue → AudioDecoder → AudioResampler
-///                → SDL2AudioRenderer → 扬声器
-///
-///   视频链路: TODO (Decoder 已有, 缺 OpenGL Renderer)
-///
-/// ==========================================================================
-/// 线程 (2 条)
-/// ==========================================================================
-///   Demux Thread:  av_read_frame → 路由 packet 到对应 PacketQueue
-///   Audio Decode:  pop PacketQueue → decode → resample → render(ring buffer)
-///   SDL Callback:  SDL 内部线程, 从 ring buffer 取 PCM → 播放 + 更新 AudioClock
+/// 播放器中央控制器 — IPlayer 实现, 串联所有模块.
+/// v2: 音频+视频完整管线.
 
 #include "api/player.h"
 #include "api/player_config.h"
@@ -28,10 +13,10 @@
 #include "decode/video_decoder/video_decoder.h"
 #include "process/resampler/audio_resampler.h"
 #include "render/audio/sdl2_renderer/sdl2_audio_renderer.h"
+#include "render/video/opengl_renderer/sdl_video_renderer.h"
 
 #include <atomic>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <thread>
 
@@ -44,8 +29,6 @@ public:
   PlayerController();
   explicit PlayerController(const PlayerConfig& config);
   ~PlayerController() override;
-
-  // ── IPlayer ──────────────────────────────────────────────────────────
 
   int  open(const char* url) override;
   int  open(const char* url, const PlayerConfig& config) override;
@@ -65,58 +48,53 @@ public:
   void        setCallback(IPlayerCallback* cb) override;
 
 private:
-  // ── 管线 ────────────────────────────────────────────────────────────
-
   int  initPipeline_(const char* url);
   void startThreads_();
   void stopThreads_();
   void teardown_();
 
-  // ── 线程函数 ──────────────────────────────────────────────────────────
-
   void demuxLoop_();
   void audioDecodeLoop_();
-
-  // ── 状态/事件 ────────────────────────────────────────────────────────
+  void videoDecodeLoop_();
+  void videoRenderLoop_();
 
   void changeState_(PlayerState newState);
   void notifyError_(const char* msg);
+  void notifyProgress_();
 
-  // ── 配置 ─────────────────────────────────────────────────────────────
-
-  PlayerConfig      m_config;
-  IPlayerCallback*  m_callback = nullptr;
-
-  // ── 子模块 ────────────────────────────────────────────────────────────
-
-  FFmpegDemuxer            m_demuxer;
-  AudioDecoder             m_audioDecoder;
-  AudioResampler           m_audioResampler;
-  SDL2AudioRenderer        m_audioRenderer;
-  // VideoDecoder           m_videoDecoder;    // TODO
-  ClockManager             m_clockMgr;
-  EventBus                 m_eventBus;
+  PlayerConfig     m_config;
+  IPlayerCallback* m_callback = nullptr;
   std::atomic<PlayerState> m_state{PlayerState::Idle};
 
-  // ── 队列 ──────────────────────────────────────────────────────────────
+  // 子模块
+  FFmpegDemuxer      m_demuxer;
+  AudioDecoder       m_audioDecoder;
+  VideoDecoder       m_videoDecoder;
+  AudioResampler     m_audioResampler;
+  SDL2AudioRenderer  m_audioRenderer;
+  SDLVideoRenderer    m_videoRenderer;
+  ClockManager       m_clockMgr;
+  EventBus           m_eventBus;
 
+  // 队列
   using PktQueue = PacketQueue<std::shared_ptr<AVPacket>>;
   std::shared_ptr<PktQueue> m_audioPktQueue;
-  // std::shared_ptr<PktQueue> m_videoPktQueue;  // TODO
+  std::shared_ptr<PktQueue> m_videoPktQueue;
 
-  // ── 线程 ──────────────────────────────────────────────────────────────
-
+  // 线程
   std::unique_ptr<std::thread> m_demuxThread;
   std::unique_ptr<std::thread> m_audioDecodeThread;
+  std::unique_ptr<std::thread> m_videoDecodeThread;
+  std::unique_ptr<std::thread> m_videoRenderThread;
 
   std::atomic<bool> m_abortRequested{false};
   std::atomic<bool> m_seeking{false};
 
-  // ── 流信息 ────────────────────────────────────────────────────────────
-
+  // 流信息
   int     m_audioStreamIdx = -1;
   int     m_videoStreamIdx = -1;
   int64_t m_durationMs     = 0;
+  double  m_frameDuration  = 0.04;  // 25fps default
 };
 
 } // namespace player

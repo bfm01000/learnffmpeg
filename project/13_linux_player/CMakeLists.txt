@@ -41,16 +41,7 @@ unset(ENV{PKG_CONFIG_PATH})
 # SDL2
 pkg_check_modules(SDL2 REQUIRED sdl2)
 
-# OpenGL
-find_package(OpenGL REQUIRED)
-
-# GLFW (windowing) — optional, only needed for OpenGL video renderer
-pkg_check_modules(GLFW QUIET glfw3)
-if(GLFW_FOUND)
-  add_compile_definitions(PLAYER_HAS_GLFW=1)
-else()
-  message(WARNING "glfw3 not found — OpenGL window renderer disabled")
-endif()
+# Video rendering via SDL2 (no OpenGL/GLFW needed)
 
 # Threads
 find_package(Threads REQUIRED)
@@ -128,9 +119,7 @@ target_link_libraries(player_sdk PUBLIC
   Threads::Threads
 )
 
-if(GLFW_FOUND)
-  target_link_libraries(player_sdk PUBLIC OpenGL::GL ${GLFW_LIBRARIES})
-endif()
+# Video rendering uses SDL2 (no GLFW needed)
 
 target_include_directories(player_sdk PUBLIC
   ${CMAKE_SOURCE_DIR}
@@ -166,8 +155,6 @@ if(BUILD_TESTS)
 endif()
 
 # ── Examples ───────────────────────────────────────────────────────────────
-if(BUILD_EXAMPLES AND GLFW_FOUND)
+if(BUILD_EXAMPLES)
   add_subdirectory(examples)
-elseif(BUILD_EXAMPLES)
-  message(WARNING "Examples disabled — GLFW not found")
 endif()
