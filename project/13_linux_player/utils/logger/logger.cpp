@@ -5,6 +5,7 @@
 #include <cstring>
 #include <ctime>
 #include <iomanip>
+#include <map>
 #include <sstream>
 
 namespace player {
@@ -17,7 +18,7 @@ Logger& Logger::instance()
 
 Logger::Logger()
     : level_(LogLevel::Info)
-    , output_(stdout)
+    , output_(stderr)  // default to stderr for debugging
 {
 }
 
@@ -40,7 +41,6 @@ void Logger::setOutputFile(const std::string& path)
 
     FILE* new_output = std::fopen(path.c_str(), "a");
     if (!new_output) {
-        // Fallback to stderr on failure
         new_output = stderr;
     }
 
@@ -50,23 +50,60 @@ void Logger::setOutputFile(const std::string& path)
     output_ = new_output;
 }
 
+void Logger::setTagLevel(const std::string& tag, LogLevel level)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    tagLevels_[tag] = level;
+}
+
+bool Logger::isEnabled(const char* tag, LogLevel level) const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = tagLevels_.find(tag);
+    if (it != tagLevels_.end()) {
+        return level >= it->second;
+    }
+    return level >= level_;
+}
+
 void Logger::log(LogLevel level, const char* file, int line, const char* fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
-    vlog(level, file, line, fmt, args);
+    vlog(nullptr, level, file, line, fmt, args);
     va_end(args);
 }
 
-void Logger::vlog(LogLevel level, const char* file, int line, const char* fmt, va_list args)
+void Logger::log(const char* tag, LogLevel level, const char* file, int line,
+                 const char* fmt, ...)
 {
-    if (level < level_) {
-        return; // Filtered by level
+    va_list args;
+    va_start(args, fmt);
+    vlog(tag, level, file, line, fmt, args);
+    va_end(args);
+}
+
+void Logger::vlog(const char* tag, LogLevel level, const char* file, int line,
+                  const char* fmt, va_list args)
+{
+    // Level check: per-tag first, then global
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (tag) {
+            auto it = tagLevels_.find(tag);
+            if (it != tagLevels_.end()) {
+                if (level < it->second) return;
+            } else if (level < level_) {
+                return;
+            }
+        } else if (level < level_) {
+            return;
+        }
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
 
-    // Get current time
+    // Timestamp
     auto now = std::chrono::system_clock::now();
     auto now_c = std::chrono::system_clock::to_time_t(now);
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -75,13 +112,18 @@ void Logger::vlog(LogLevel level, const char* file, int line, const char* fmt, v
     struct tm tm_buf;
     localtime_r(&now_c, &tm_buf);
 
-    // Format: [2025-01-15 10:30:45.123] [INFO] file:line - message
-    std::fprintf(output_, "[%04d-%02d-%02d %02d:%02d:%02d.%03lld] [%s] %s:%d - ",
-        tm_buf.tm_year + 1900, tm_buf.tm_mon + 1, tm_buf.tm_mday,
-        tm_buf.tm_hour, tm_buf.tm_min, tm_buf.tm_sec,
-        static_cast<long long>(ms.count()),
-        levelToString(level),
-        file, line);
+    // Format: [HH:MM:SS.mmm] [TAG] [LVL] msg
+    if (tag) {
+        std::fprintf(output_, "[%02d:%02d:%02d.%03lld] [%-6s] [%s] ",
+            tm_buf.tm_hour, tm_buf.tm_min, tm_buf.tm_sec,
+            static_cast<long long>(ms.count()),
+            tag, levelToString(level));
+    } else {
+        std::fprintf(output_, "[%02d:%02d:%02d.%03lld] [%s] %s:%d - ",
+            tm_buf.tm_hour, tm_buf.tm_min, tm_buf.tm_sec,
+            static_cast<long long>(ms.count()),
+            levelToString(level), file, line);
+    }
 
     std::vfprintf(output_, fmt, args);
     std::fprintf(output_, "\n");

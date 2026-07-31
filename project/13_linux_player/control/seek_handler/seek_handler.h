@@ -10,36 +10,48 @@
 #include <memory>
 
 struct AVFrame;
+struct AVPacket;
 
 namespace player {
 
 // Forward declarations
 struct Frame;          // from core/memory/frame.h
 class ClockManager;    // from core/clock/clock_manager.h
+class EventBus;        // from core/event/event_bus.h
 
 /// @brief Seek 请求处理器
 ///
 /// 负责处理 seek 请求的全流程：
-///   暂停时钟 -> 清空队列 -> 刷新解码器 -> demux seek -> 解码到目标帧 -> 设置时钟 -> 恢复
+///   暂停时钟 -> 清空队列 -> 刷新解码器 -> demux seek -> 设置时钟 -> 恢复
+///
+/// "解码到目标帧"不在 SeekHandler 内部完成——它由解码线程自然完成:
+///   demux seek 后, 下一个 readPacket() 返回新位置的 packet,
+///   解码线程消费它即可得到目标帧.
 class SeekHandler {
 public:
-    using PacketQueueType = PacketQueue<std::shared_ptr<struct AVPacket>>;
+    using PacketQueueType = PacketQueue<std::shared_ptr<::AVPacket>>;
     using FrameQueueType  = FrameQueue<std::shared_ptr<Frame>>;
 
     /// @brief 外部依赖集合 —— 由 PlayerController 注入
     struct Dependencies {
-        /// Demuxer 接口（由 PlayerController 提供）
-        struct Demuxer {
-            /// Seek 到指定位置
-            std::function<bool(int64_t position_ms, int flags)> seekTo;
-        };
+        /// Demux seek
+        std::function<bool(int64_t position_ms, int flags)> demuxSeekTo;
 
-        std::shared_ptr<Demuxer>           demuxer;
-        std::shared_ptr<ClockManager>      clock_mgr;
-        std::shared_ptr<PacketQueueType>   video_pkt_queue;
-        std::shared_ptr<PacketQueueType>   audio_pkt_queue;
-        std::shared_ptr<FrameQueueType>    video_frm_queue;
-        std::shared_ptr<FrameQueueType>    audio_frm_queue;
+        /// Flush decoders (increment serial)
+        std::function<void()> flushAudioDecoder;
+        std::function<void()> flushVideoDecoder;
+
+        /// Clocks
+        std::shared_ptr<ClockManager>      clockMgr;
+
+        /// Queues
+        std::shared_ptr<PacketQueueType>   videoPktQueue;
+        std::shared_ptr<PacketQueueType>   audioPktQueue;
+        std::shared_ptr<FrameQueueType>    videoFrmQueue;
+        std::shared_ptr<FrameQueueType>    audioFrmQueue;
+
+        /// Event bus for notifications
+        std::shared_ptr<EventBus>          eventBus;
     };
 
     explicit SeekHandler(const Dependencies& deps);
@@ -47,22 +59,23 @@ public:
     /// @brief 执行 seek
     /// @param position_ms 目标位置（毫秒）
     /// @param flags       SeekFlag 组合
-    /// @return true 成功，false 失败
+    /// @return true 成功, false 失败（已在 seek 中）
     bool seekTo(int64_t position_ms, int32_t flags = 0);
 
     /// @brief 当前是否正在 seek
-    bool isSeeking() const { return seeking_.load(); }
+    bool isSeeking() const { return m_seeking.load(std::memory_order_acquire); }
 
     /// @brief 获取当前 seek 目标位置
-    int64_t getTargetPosition() const { return target_pos_ms_.load(); }
+    int64_t getTargetPosition() const { return m_targetPosMs.load(std::memory_order_acquire); }
 
 private:
-    void flushQueues();
-    void notifySeekComplete(int64_t position_ms);
+    void flushQueues_();
+    void flushDecoders_();
+    void notifySeekComplete_(int64_t position_ms);
 
-    std::shared_ptr<Dependencies> deps_;
-    std::atomic<bool>   seeking_;
-    std::atomic<int64_t> target_pos_ms_;
+    Dependencies m_deps;
+    std::atomic<bool>    m_seeking{false};
+    std::atomic<int64_t> m_targetPosMs{0};
 };
 
 } // namespace player

@@ -2,6 +2,8 @@
 /// @brief SDL2AudioRenderer — SDL2 音频输出实现.
 
 #include "render/audio/sdl2_renderer/sdl2_audio_renderer.h"
+#include "core/clock/clock.h"
+#include "utils/logger/logger.h"
 
 #include <cerrno>
 #include <cstring>
@@ -16,7 +18,6 @@ namespace player {
 // ── 生命周期 ────────────────────────────────────────────────────────────
 
 SDL2AudioRenderer::SDL2AudioRenderer() {
-  SDL_InitSubSystem(SDL_INIT_AUDIO);
   m_ringBuffer = std::make_unique<AudioRingBuffer>();
 }
 
@@ -30,18 +31,18 @@ int SDL2AudioRenderer::init(const RenderConfig& /*cfg*/) {
   return 0;
 }
 
-// ── openDevice_ ──────────────────────────────────────────────────────────
+// ── openDevice (eager, with explicit params) ─────────────────────────────
 
-int SDL2AudioRenderer::openDevice_(AVFrame* frame) {
+int SDL2AudioRenderer::openDevice(int& sampleRate, int channels, AVSampleFormat fmt) {
   if (m_deviceId != 0) return 0;
 
   SDL_AudioSpec desired;
   SDL_zero(desired);
 
-  m_sampleRate = frame->sample_rate;
-  m_channels   = frame->ch_layout.nb_channels;
+  m_sampleRate = sampleRate;
+  m_channels   = channels;
 
-  switch (frame->format) {
+  switch (fmt) {
     case AV_SAMPLE_FMT_S16:
     case AV_SAMPLE_FMT_S16P:
       desired.format = AUDIO_S16SYS;
@@ -65,20 +66,25 @@ int SDL2AudioRenderer::openDevice_(AVFrame* frame) {
   desired.userdata = this;
 
   SDL_AudioSpec obtained;
-  m_deviceId = SDL_OpenAudioDevice(nullptr, 0, &desired, &obtained,
-                                    SDL_AUDIO_ALLOW_ANY_CHANGE);
+  // Don't use SDL_AUDIO_ALLOW_ANY_CHANGE — we want exact format match
+  m_deviceId = SDL_OpenAudioDevice(nullptr, 0, &desired, &obtained, 0);
   if (m_deviceId == 0) return -1;
 
-  m_sampleRate = obtained.freq;
-  m_channels   = obtained.channels;
-  if (obtained.format == AUDIO_S16SYS) {
-    m_bytesPerSample = m_channels * 2;
-  } else if (obtained.format == AUDIO_F32SYS) {
-    m_bytesPerSample = m_channels * 4;
-  }
+  m_sampleRate    = obtained.freq;
+  m_channels      = obtained.channels;
+  m_bytesPerSample = (obtained.format == AUDIO_F32SYS) ? m_channels * 4 : m_channels * 2;
+  sampleRate      = obtained.freq;
 
-  SDL_PauseAudioDevice(m_deviceId, 0);
+  // Device stays paused — caller unpauses after clock reset
   return 0;
+}
+
+// ── openDevice_ (lazy, from AVFrame) ─────────────────────────────────────
+
+int SDL2AudioRenderer::openDevice_(AVFrame* frame) {
+  int sr = frame->sample_rate;
+  return openDevice(sr, frame->ch_layout.nb_channels,
+                    static_cast<AVSampleFormat>(frame->format));
 }
 
 // ── render ──────────────────────────────────────────────────────────────
@@ -98,8 +104,12 @@ int SDL2AudioRenderer::render(AVFrame* frame) {
       static_cast<AVSampleFormat>(frame->format), 1);
   if (bytes <= 0) return 0;
 
-  size_t written = m_ringBuffer->write(frame->data[0], static_cast<size_t>(bytes));
-  return written > 0 ? 0 : -1;
+  // Block until ring buffer has space (don't drop audio frames)
+  while (m_ringBuffer->writable() < static_cast<size_t>(bytes)) {
+    SDL_Delay(1);
+  }
+  m_ringBuffer->write(frame->data[0], static_cast<size_t>(bytes));
+  return 0;
 }
 
 // ── resize ──────────────────────────────────────────────────────────────
@@ -126,7 +136,7 @@ void SDL2AudioRenderer::destroy() {
     m_deviceId = 0;
   }
   m_ringBuffer->clear();
-  SDL_QuitSubSystem(SDL_INIT_AUDIO);
+  // SDL_QuitSubSystem handled centrally by PlayerController
 }
 
 // ── SDL Callback ────────────────────────────────────────────────────────
@@ -148,8 +158,17 @@ void SDL2AudioRenderer::onAudioCallback_(Uint8* stream, int len) {
   if (m_bytesPerSample > 0) {
     size_t samplesPlayed = static_cast<size_t>(len) / m_bytesPerSample;
     double elapsed = static_cast<double>(samplesPlayed) / m_sampleRate;
-    double clock = m_audioClock.load(std::memory_order_acquire);
-    m_audioClock.store(clock + elapsed, std::memory_order_release);
+    double newClock = m_audioClock.load(std::memory_order_acquire) + elapsed;
+    m_audioClock.store(newClock, std::memory_order_release);
+
+    // Sync to external ClockManager clock if wired
+    if (m_clockTarget) {
+      m_clockTarget->setClock(newClock);
+      static int clkCnt = 0; ++clkCnt;
+      if (clkCnt <= 5 || clkCnt % 50 == 0)
+        LOGD_CLOCK("SDL cb #%d clock=%.4fs (+%.1fms)",
+            clkCnt, newClock, elapsed * 1000.0);
+    }
   }
 }
 

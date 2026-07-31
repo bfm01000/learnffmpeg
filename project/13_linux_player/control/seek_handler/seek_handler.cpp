@@ -1,79 +1,110 @@
 #include "seek_handler.h"
 
 #include "core/clock/clock_manager.h"
+#include "core/event/event_bus.h"
+#include "core/event/event_types.h"
 #include "core/queue/frame_queue.h"
 #include "core/queue/packet_queue.h"
 
 namespace player {
 
 SeekHandler::SeekHandler(const Dependencies& deps)
-    : deps_(std::make_shared<Dependencies>(deps))
-    , seeking_(false)
-    , target_pos_ms_(0)
+    : m_deps(deps)
 {
 }
 
 bool SeekHandler::seekTo(int64_t position_ms, int32_t flags)
 {
-    if (seeking_.exchange(true)) {
-        // Already seeking
+    // ── Prevent concurrent seeks ───────────────────────────────────────
+    if (m_seeking.exchange(true, std::memory_order_acq_rel)) {
+        return false;  // already seeking
+    }
+
+    m_targetPosMs.store(position_ms, std::memory_order_release);
+
+    // ── 1. Pause master clock ──────────────────────────────────────────
+    if (m_deps.clockMgr) {
+        m_deps.clockMgr->setPaused(true);
+    }
+
+    // ── 2. Flush packet & frame queues ─────────────────────────────────
+    flushQueues_();
+
+    // ── 3. Flush decoders (increments serial) ──────────────────────────
+    flushDecoders_();
+
+    // ── 4. Demuxer seek ────────────────────────────────────────────────
+    bool seek_ok = false;
+    if (m_deps.demuxSeekTo) {
+        seek_ok = m_deps.demuxSeekTo(position_ms, flags);
+    }
+
+    if (!seek_ok) {
+        // Seek failed — resume clock and report
+        if (m_deps.clockMgr) {
+            m_deps.clockMgr->setPaused(false);
+        }
+        m_seeking.store(false, std::memory_order_release);
+        // Post seek-failed event
+        if (m_deps.eventBus) {
+            m_deps.eventBus->post(PlayerEvent(EventType::Error,
+                "Seek to " + std::to_string(position_ms) + "ms failed"));
+        }
         return false;
     }
 
-    target_pos_ms_.store(position_ms);
-
-    // TODO: Implement full seek flow:
-    //   1. Pause the master clock (setPaused(true))
-    //   2. Flush packet queues and frame queues
-    //   3. Flush video decoder (increment serial)
-    //   4. Flush audio decoder (increment serial)
-    //   5. Call demuxer -> seekTo(position_ms, flags)
-    //   6. Decode until reaching target frame
-    //   7. Set clock to new position
-    //   8. Resume clock (setPaused(false))
-    //   9. Notify seek complete
-
-    flushQueues();
-
-    if (deps_->demuxer && deps_->demuxer->seekTo) {
-        deps_->demuxer->seekTo(position_ms, flags);
+    // ── 5. Update clock to new position ────────────────────────────────
+    if (m_deps.clockMgr) {
+        double new_pts = static_cast<double>(position_ms) / 1000.0;
+        m_deps.clockMgr->audioClock()->setClock(new_pts);
+        m_deps.clockMgr->systemClock()->setClock(new_pts);
+        m_deps.clockMgr->externalClock()->setClock(new_pts);
+        m_deps.clockMgr->setPaused(false);
     }
 
-    // TODO: Reset decoder serials
-    // TODO: Decode to target frame
-    // TODO: Update clocks
+    // ── 6. Notify ──────────────────────────────────────────────────────
+    notifySeekComplete_(position_ms);
 
-    notifySeekComplete(position_ms);
-    seeking_.store(false);
-
+    m_seeking.store(false, std::memory_order_release);
     return true;
 }
 
-void SeekHandler::flushQueues()
+void SeekHandler::flushQueues_()
 {
-    // Flush packet queues to discard pending packets
-    if (deps_->video_pkt_queue) {
-        deps_->video_pkt_queue->flush();
-        deps_->video_pkt_queue->reset();
+    if (m_deps.videoPktQueue) {
+        m_deps.videoPktQueue->flush();
+        m_deps.videoPktQueue->reset();
     }
-    if (deps_->audio_pkt_queue) {
-        deps_->audio_pkt_queue->flush();
-        deps_->audio_pkt_queue->reset();
+    if (m_deps.audioPktQueue) {
+        m_deps.audioPktQueue->flush();
+        m_deps.audioPktQueue->reset();
     }
-
-    // Flush frame queues to discard pending frames
-    if (deps_->video_frm_queue) {
-        deps_->video_frm_queue->flush();
+    if (m_deps.videoFrmQueue) {
+        m_deps.videoFrmQueue->flush();
     }
-    if (deps_->audio_frm_queue) {
-        deps_->audio_frm_queue->flush();
+    if (m_deps.audioFrmQueue) {
+        m_deps.audioFrmQueue->flush();
     }
 }
 
-void SeekHandler::notifySeekComplete(int64_t position_ms)
+void SeekHandler::flushDecoders_()
 {
-    // TODO: Post seek-complete event to EventBus
-    // Auto placeholder for future integration
+    if (m_deps.flushAudioDecoder) {
+        m_deps.flushAudioDecoder();
+    }
+    if (m_deps.flushVideoDecoder) {
+        m_deps.flushVideoDecoder();
+    }
+}
+
+void SeekHandler::notifySeekComplete_(int64_t position_ms)
+{
+    if (m_deps.eventBus) {
+        PlayerEvent evt(EventType::SeekComplete,
+            "Seeked to " + std::to_string(position_ms) + "ms");
+        evt.data = position_ms;
+        m_deps.eventBus->post(evt);
+    }
 }
 
 } // namespace player

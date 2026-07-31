@@ -1,12 +1,19 @@
 #pragma once
 
 /// 播放器中央控制器 — IPlayer 实现, 串联所有模块.
-/// v2: 音频+视频完整管线.
+/// v3: StateMachine + FrameQueue + AVSyncEngine + SeekHandler 全链路.
+
+struct AVPacket;  // FFmpeg C type, forward-declared for shared_ptr use
 
 #include "api/player.h"
 #include "api/player_config.h"
+#include "control/av_sync_engine/av_sync_engine.h"
+#include "control/seek_handler/seek_handler.h"
+#include "control/state_machine/state_machine.h"
 #include "core/clock/clock_manager.h"
 #include "core/event/event_bus.h"
+#include "core/memory/frame.h"
+#include "core/queue/frame_queue.h"
 #include "core/queue/packet_queue.h"
 #include "source/demuxer/ffmpeg_demuxer.h"
 #include "decode/audio_decoder/audio_decoder.h"
@@ -20,81 +27,93 @@
 #include <string>
 #include <thread>
 
-struct AVPacket;
-
 namespace player {
 
 class PlayerController : public IPlayer {
 public:
-  PlayerController();
-  explicit PlayerController(const PlayerConfig& config);
-  ~PlayerController() override;
+    PlayerController();
+    explicit PlayerController(const PlayerConfig& config);
+    ~PlayerController() override;
 
-  int  open(const char* url) override;
-  int  open(const char* url, const PlayerConfig& config) override;
-  int  play()    override;
-  int  pause()   override;
-  int  stop()    override;
-  int  seek(int64_t positionMs) override;
-  int  setSpeed(double speed) override;
-  int  setVolume(float volume) override;
-  int  setLoop(bool loop) override;
+    int  open(const char* url) override;
+    int  open(const char* url, const PlayerConfig& config) override;
+    int  play()    override;
+    int  pause()   override;
+    int  stop()    override;
+    int  seek(int64_t positionMs) override;
+    int  setSpeed(double speed) override;
+    int  setVolume(float volume) override;
+    int  setLoop(bool loop) override;
 
-  PlayerState getState()    const override;
-  int64_t     getPosition() const override;
-  int64_t     getDuration() const override;
-  bool        isPlaying()   const override;
-  bool        isSeeking()   const override;
-  void        setCallback(IPlayerCallback* cb) override;
+    bool pumpEvents() override;
+
+    PlayerState getState()    const override;
+    int64_t     getPosition() const override;
+    int64_t     getDuration() const override;
+    bool        isPlaying()   const override;
+    bool        isSeeking()   const override;
+    void        setCallback(IPlayerCallback* cb) override;
 
 private:
-  int  initPipeline_(const char* url);
-  void startThreads_();
-  void stopThreads_();
-  void teardown_();
+    int  initPipeline_(const char* url);
+    void setupStateMachine_();
+    void setupSeekHandler_();
+    void startThreads_();
+    void stopThreads_();
+    void teardown_();
 
-  void demuxLoop_();
-  void audioDecodeLoop_();
-  void videoDecodeLoop_();
-  void videoRenderLoop_();
+    void demuxLoop_();
+    void audioDecodeLoop_();
+    void videoDecodeLoop_();
 
-  void changeState_(PlayerState newState);
-  void notifyError_(const char* msg);
-  void notifyProgress_();
+    void notifyError_(const char* msg);
+    void notifyProgress_();
 
-  PlayerConfig     m_config;
-  IPlayerCallback* m_callback = nullptr;
-  std::atomic<PlayerState> m_state{PlayerState::Idle};
+    PlayerConfig     m_config;
+    IPlayerCallback* m_callback = nullptr;
 
-  // 子模块
-  FFmpegDemuxer      m_demuxer;
-  AudioDecoder       m_audioDecoder;
-  VideoDecoder       m_videoDecoder;
-  AudioResampler     m_audioResampler;
-  SDL2AudioRenderer  m_audioRenderer;
-  SDLVideoRenderer    m_videoRenderer;
-  ClockManager       m_clockMgr;
-  EventBus           m_eventBus;
+    // ── Control infrastructure ─────────────────────────────────────────
+    StateMachine  m_stateMachine;
+    ClockManager  m_clockMgr;
+    AVSyncEngine  m_avSync;
+    EventBus      m_eventBus;
+    std::unique_ptr<SeekHandler> m_seekHandler;
 
-  // 队列
-  using PktQueue = PacketQueue<std::shared_ptr<AVPacket>>;
-  std::shared_ptr<PktQueue> m_audioPktQueue;
-  std::shared_ptr<PktQueue> m_videoPktQueue;
+    // ── Pipeline modules ───────────────────────────────────────────────
+    FFmpegDemuxer      m_demuxer;
+    AudioDecoder       m_audioDecoder;
+    VideoDecoder       m_videoDecoder;
+    AudioResampler     m_audioResampler;
+    SDL2AudioRenderer  m_audioRenderer;
+    SDLVideoRenderer   m_videoRenderer;
 
-  // 线程
-  std::unique_ptr<std::thread> m_demuxThread;
-  std::unique_ptr<std::thread> m_audioDecodeThread;
-  std::unique_ptr<std::thread> m_videoDecodeThread;
-  std::unique_ptr<std::thread> m_videoRenderThread;
+    // ── Queues ─────────────────────────────────────────────────────────
+    using PktQueue = PacketQueue<std::shared_ptr<AVPacket>>;
+    using FrmQueue = FrameQueue<std::shared_ptr<Frame>>;
 
-  std::atomic<bool> m_abortRequested{false};
-  std::atomic<bool> m_seeking{false};
+    std::shared_ptr<PktQueue> m_audioPktQueue;
+    std::shared_ptr<PktQueue> m_videoPktQueue;
+    std::shared_ptr<FrmQueue> m_videoFrmQueue;
 
-  // 流信息
-  int     m_audioStreamIdx = -1;
-  int     m_videoStreamIdx = -1;
-  int64_t m_durationMs     = 0;
-  double  m_frameDuration  = 0.04;  // 25fps default
+    // ── Threads ────────────────────────────────────────────────────────
+    std::unique_ptr<std::thread> m_demuxThread;
+    std::unique_ptr<std::thread> m_audioDecodeThread;
+    std::unique_ptr<std::thread> m_videoDecodeThread;
+
+    std::atomic<bool> m_abortRequested{false};
+    bool m_dropVideoUntilKeyframe = false;  // demuxLoop_ 丢帧恢复标志
+
+    // ── Stream info ────────────────────────────────────────────────────
+    int     m_audioStreamIdx = -1;
+    int     m_videoStreamIdx = -1;
+    int64_t m_durationMs     = 0;
+    double  m_frameDuration  = 0.04;  // 25fps default
+
+    // ── Playback state ─────────────────────────────────────────────────
+    float  m_volume      = 1.0f;
+    bool   m_loop        = false;
+    double m_speed       = 1.0;
+    std::chrono::steady_clock::time_point m_nextVTime{}; // frame pacing
 };
 
 } // namespace player

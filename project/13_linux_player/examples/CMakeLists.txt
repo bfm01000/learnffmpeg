@@ -25,3 +25,21 @@ add_executable(full_player
   full_player/main.cpp
 )
 target_link_libraries(full_player PRIVATE player_sdk)
+
+add_executable(minimal_sdl
+  minimal_sdl/main.cpp
+)
+target_link_libraries(minimal_sdl PRIVATE ${FFMPEG_LIBRARIES} ${SDL2_LIBRARIES} Threads::Threads)
+target_include_directories(minimal_sdl PRIVATE ${FFMPEG_INCLUDE_DIRS} ${SDL2_INCLUDE_DIRS})
+
+add_executable(minimal_audio
+  minimal_audio/main.cpp
+)
+target_link_libraries(minimal_audio PRIVATE ${FFMPEG_LIBRARIES} ${SDL2_LIBRARIES} Threads::Threads)
+target_include_directories(minimal_audio PRIVATE ${FFMPEG_INCLUDE_DIRS} ${SDL2_INCLUDE_DIRS})
+
+add_executable(minimal_av
+  minimal_av/main.cpp
+)
+target_link_libraries(minimal_av PRIVATE ${FFMPEG_LIBRARIES} ${SDL2_LIBRARIES} Threads::Threads)
+target_include_directories(minimal_av PRIVATE ${FFMPEG_INCLUDE_DIRS} ${SDL2_INCLUDE_DIRS})

@@ -3,7 +3,6 @@
 
 #include "render/i_renderer.h"
 #include <SDL2/SDL.h>
-#include <memory>
 
 struct AVFrame;
 
@@ -20,11 +19,15 @@ public:
   void destroy() override;
   bool shouldClose() const;
 
+  /// Poll SDL events. Must be called from main thread (X11 requirement).
+  /// @return false if window was closed (SDL_QUIT)
+  bool pollEvents();
+
 private:
-  SDL_Window*   m_window = nullptr;
+  SDL_Window*   m_window   = nullptr;
   SDL_Renderer* m_renderer = nullptr;
-  SDL_Texture*  m_texture = nullptr;
-  int m_winW=0, m_winH=0;
+  SDL_Texture*  m_texture  = nullptr;
+  int m_winW = 0, m_winH  = 0;
 };
 
 }

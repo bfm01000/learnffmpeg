@@ -28,6 +28,9 @@
 
 namespace player {
 
+// fwd
+class Clock;
+
 class SDL2AudioRenderer : public IRenderer {
 public:
   SDL2AudioRenderer();
@@ -53,6 +56,17 @@ public:
   /// 获取当前播放位置（秒）, 由 SDL callback 更新.
   double getAudioClock() const { return m_audioClock.load(std::memory_order_acquire); }
 
+  /// 设置外部 Clock 对象, SDL callback 会将播放进度同步到该 clock.
+  /// 传 nullptr 则取消同步.
+  void setClockTarget(Clock* clock) { m_clockTarget = clock; }
+
+  /// 预先打开音频设备（必须在 SDL_CreateWindow 之前调用）.
+  /// 之后 render() 不再触发延迟打开，直接写入 ring buffer.
+  /// @param[in,out] sampleRate  输入目标采样率，输出设备实际采样率
+  /// @param[in]     channels    目标声道数
+  /// @param[in]     format      目标采样格式
+  int openDevice(int& sampleRate, int channels, AVSampleFormat format);
+
 private:
   /// 根据帧参数（首次打开时使用）打开 SDL 设备
   int openDevice_(AVFrame* frame);
@@ -65,6 +79,7 @@ private:
   std::unique_ptr<AudioRingBuffer> m_ringBuffer;
   std::atomic<double>        m_audioClock{0.0};
   std::atomic<bool>          m_paused{false};
+  Clock*                     m_clockTarget = nullptr; // non-owning
 
   int m_sampleRate = 0;
   int m_channels   = 0;

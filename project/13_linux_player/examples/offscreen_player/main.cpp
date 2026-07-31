@@ -5,9 +5,11 @@
 #include "player_config.h"
 #include "player_callback.h"
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
+#include <thread>
 
 using namespace player;
 

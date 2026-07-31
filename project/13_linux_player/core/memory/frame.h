@@ -1,19 +1,13 @@
 #pragma once
 
+#include "api/player_types.h"
+
 #include <cstdint>
 #include <memory>
 
 struct AVFrame;
 
 namespace player {
-
-enum class MediaType {
-    Unknown,
-    Video,
-    Audio,
-    Subtitle,
-    Data
-};
 
 struct Frame {
     using AVFramePtr = std::shared_ptr<AVFrame>;

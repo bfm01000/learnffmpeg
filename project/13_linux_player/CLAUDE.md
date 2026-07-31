@@ -1,5 +1,25 @@
 # CLAUDE.md
 
+# 项目开发规范与工作流指南
+
+## 核心规则 (强制执行)
+
+1. **任务记录规范**：
+   - 每当你完成一个子任务或修复了一个 Bug，**必须自动**将“完成了什么、修改了哪些文件”追加记载到 `PROGRESS.md` 文件中。
+   - 记录格式需包含时间和简洁说明，例如：
+     `[YYYY-MM-DD HH:MM] 完成了 FFmpeg 解码器初始化逻辑，修改了 src/decoder.c`
+
+2. **问题与踩坑记录规范**：
+   - 只要在开发、编译、运行过程中遇到报错或排查了难题，**必须自动**将问题现象和最终解决方案写进 `ISSUES.md`（或 `PROGRESS.md` 的“已知问题/已解决”区域）。
+   - 记录格式：
+     `[问题] 编译报错 undefined reference to 'avformat_open_input'`
+     `[原因] CMakeLists.txt 未正确链接 avformat 动态库`
+     `[解决] 追加 target_link_libraries(player avformat)`
+
+3. **执行流程**：
+   - 每次开始新任务前，先阅读 `PROGRESS.md` 确认当前进展。
+   - 在写代码、改配置或解决问题后，**自动更新文档，无需等待用户提醒**。
+
 # Linux Player SDK - AI Engineering Constitution
 # Linux 播放器 SDK —— AI 工程开发规范
 

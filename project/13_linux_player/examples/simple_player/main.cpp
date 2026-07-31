@@ -6,9 +6,11 @@
 #include "player_callback.h"
 #include "player_types.h"
 
+#include <chrono>
 #include <csignal>
 #include <cstdlib>
 #include <iostream>
+#include <thread>
 
 using namespace player;
 

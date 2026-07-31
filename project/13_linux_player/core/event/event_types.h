@@ -8,10 +8,12 @@ namespace player {
 
 enum class EventType {
     // Playback events
+    Open,         // open(url) called
     Play,
     Pause,
     Stop,
     Seek,
+    SeekComplete, // seek finished, new position ready
     EOS,
     Buffering,
     BufferingEnd,
@@ -20,9 +22,11 @@ enum class EventType {
     StateChanged,
     Error,
     Info,
+    Retry,        // user retry after error
+    Stopped,      // all threads exited, resources released
 
     // Media events
-    MediaLoaded,
+    MediaLoaded,  // pipeline init success, ready to play
     MediaUnloaded,
     VideoFormatChanged,
     AudioFormatChanged,
