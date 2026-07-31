@@ -113,6 +113,7 @@ private:
     float  m_volume      = 1.0f;
     bool   m_loop        = false;
     double m_speed       = 1.0;
+    std::chrono::steady_clock::time_point m_playStart{}; // play() wall time
     std::chrono::steady_clock::time_point m_nextVTime{}; // frame pacing
 };
 

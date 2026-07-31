@@ -112,12 +112,16 @@ void Logger::vlog(const char* tag, LogLevel level, const char* file, int line,
     struct tm tm_buf;
     localtime_r(&now_c, &tm_buf);
 
-    // Format: [HH:MM:SS.mmm] [TAG] [LVL] msg
+    // Format: [HH:MM:SS.mmm] [TAG] [LVL] file:line msg
     if (tag) {
-        std::fprintf(output_, "[%02d:%02d:%02d.%03lld] [%-6s] [%s] ",
+        // Extract just the filename from the full path
+        const char* fname = strrchr(file, '/');
+        fname = fname ? fname + 1 : file;
+
+        std::fprintf(output_, "[%02d:%02d:%02d.%03lld] [%-6s] [%s] %s:%d ",
             tm_buf.tm_hour, tm_buf.tm_min, tm_buf.tm_sec,
             static_cast<long long>(ms.count()),
-            tag, levelToString(level));
+            tag, levelToString(level), fname, line);
     } else {
         std::fprintf(output_, "[%02d:%02d:%02d.%03lld] [%s] %s:%d - ",
             tm_buf.tm_hour, tm_buf.tm_min, tm_buf.tm_sec,

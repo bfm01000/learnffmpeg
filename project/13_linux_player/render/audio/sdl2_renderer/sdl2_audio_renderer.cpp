@@ -165,9 +165,9 @@ void SDL2AudioRenderer::onAudioCallback_(Uint8* stream, int len) {
     if (m_clockTarget) {
       m_clockTarget->setClock(newClock);
       static int clkCnt = 0; ++clkCnt;
-      if (clkCnt <= 5 || clkCnt % 50 == 0)
-        LOGD_CLOCK("SDL cb #%d clock=%.4fs (+%.1fms)",
-            clkCnt, newClock, elapsed * 1000.0);
+      if (clkCnt <= 10 || clkCnt % 100 == 0)
+        LOGD_CLOCK("cb #%d clock=%.1fms (+%.1fms)",
+            clkCnt, newClock * 1000.0, elapsed * 1000.0);
     }
   }
 }

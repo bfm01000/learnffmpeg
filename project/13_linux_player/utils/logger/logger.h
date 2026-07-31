@@ -76,10 +76,14 @@ private:
 
 // ── 通道化日志宏（用于 AV 同步调试）────────────────────────────────────────
 // 使用方式: LOGD_AV("frame pts=%.3f clock=%.3f", fPts, clk);
+// 输出格式: [HH:MM:SS.mmm] [avsync] [DEBUG] file.cpp:123 frame pts=0.04s clock=0.05s
 // 运行时可过滤: Logger::instance().setTagLevel("avsync", LogLevel::Debug);
 
+#define LOG_TAG(level, tag, fmt, ...) \
+    player::Logger::instance().log(tag, level, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
+
 #define LOGD_TAG(tag, fmt, ...) \
-    player::Logger::instance().log(tag, player::LogLevel::Debug, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
+    LOG_TAG(player::LogLevel::Debug, tag, fmt, ##__VA_ARGS__)
 
 // AV sync channel — 音视频同步决策
 #define LOGD_AV(fmt, ...)     LOGD_TAG("avsync", fmt, ##__VA_ARGS__)

@@ -136,10 +136,10 @@ int PlayerController::play()
             // matching video frame PTS 0.0.
             m_clockMgr.audioClock()->setClock(0.0);
             m_clockMgr.setPaused(false);
-            LOGD_CLOCK("play: audio_clock=0.0 (reset)");
+            m_playStart = std::chrono::steady_clock::now();
+            LOGD_CLOCK("play: start_time=0ms audio_clock=0.0");
             if (m_audioStreamIdx >= 0) {
-                m_audioRenderer.resume(); // unpause SDL audio device
-                LOGD_AUDIO("play: SDL audio device unpaused");
+                m_audioRenderer.resume();
             }
             startThreads_();
         }
@@ -306,8 +306,7 @@ int PlayerController::initPipeline_(const char* url)
 
             m_videoPktQueue = std::make_shared<PktQueue>(
                 static_cast<size_t>(m_config.misc.video_pkt_q_size));
-            m_videoFrmQueue = std::make_shared<FrmQueue>(
-                static_cast<size_t>(m_config.misc.video_frm_q_size));
+            m_videoFrmQueue = std::make_shared<FrmQueue>(16); // big enough to absorb bursts
 
             RenderConfig vcfg;
             vcfg.width  = vs->codecpar->width;
@@ -433,21 +432,12 @@ void PlayerController::demuxLoop_()
             bool isKeyframe = (pkt->flags & AV_PKT_FLAG_KEY);
 
             if (isKeyframe) {
-                // 关键帧 (IDR): 解码器恢复的唯一入口。
-                // 无论如何都要入队 — 用无限阻塞。
                 m_dropVideoUntilKeyframe = false;
-                if (!m_videoPktQueue->push(pkt, -1)) {
-                    break;  // abort
-                }
+                if (!m_videoPktQueue->push(pkt, -1)) break;
             } else if (m_dropVideoUntilKeyframe) {
-                // 仍在"跳过模式"中 — 丢弃此非关键帧，不等了。
-                // shared_ptr 离开作用域自动释放 AVPacket。
                 continue;
             } else {
-                // 非关键帧，正常模式：尝试入队（有超时）。
                 if (!m_videoPktQueue->push(pkt, 100)) {
-                    // 队列满 + 超时 → 进入"跳过模式"。
-                    // 丢此帧，并跳过后续所有非关键帧，直到下一个 IDR。
                     m_dropVideoUntilKeyframe = true;
 
                     // 向视频解码器注入 flush，清除残留的 GOP 参考帧状态。
@@ -501,11 +491,14 @@ void PlayerController::audioDecodeLoop_()
             AVFrame* rf = m_audioResampler.convert(f);
             if (rf) {
                 static int aCnt = 0; ++aCnt;
-                if (aCnt <= 5 || aCnt % 100 == 0)
-                    LOGD_AUDIO("decode #%d pts=%.4fs samples=%d",
-                        aCnt, f->pts * av_q2d(m_demuxer.formatContext()
-                            ->streams[m_audioStreamIdx]->time_base),
-                        rf->nb_samples);
+                if (aCnt <= 5 || aCnt % 100 == 0) {
+                    using namespace std::chrono;
+                    auto e = duration<double, std::milli>(steady_clock::now() - m_playStart).count();
+                    double aPts = f->pts * av_q2d(m_demuxer.formatContext()
+                        ->streams[m_audioStreamIdx]->time_base);
+                    LOGD_AUDIO("#%d T+%.0fms pts=%.1fms samp=%d",
+                        aCnt, e, aPts * 1000.0, rf->nb_samples);
+                }
                 m_audioRenderer.render(rf);
                 av_frame_free(&rf);
             }
@@ -545,6 +538,18 @@ void PlayerController::videoDecodeLoop_()
             continue;
         }
 
+        // Skip packets more than 2s ahead of audio clock.
+        // This keeps the decode pipeline close to real time and
+        // prevents the video from jumping 10+ seconds ahead.
+        double pktPts = pkt->pts * av_q2d(m_demuxer.formatContext()
+            ->streams[m_videoStreamIdx]->time_base);
+        double aClk = m_clockMgr.audioClock()->getClock();
+        if (pktPts - aClk > 2.0) {
+            static int sSkip = 0;
+            if (++sSkip <= 5) LOGD_VIDEO("skip pkt pts=%.1fms clk=%.1fms (>2s ahead)", pktPts*1000, aClk*1000);
+            continue;
+        }
+
         int send_ret = m_videoDecoder.sendPacket(pkt.get());
         if (send_ret < 0 && send_ret != AVERROR(EAGAIN)) continue;
 
@@ -567,17 +572,21 @@ void PlayerController::videoDecodeLoop_()
                 frame->pts = workFrame->pts * tbSec;
             }
 
-            // Block until FrameQueue has space — don't drop frames.
-            // Decode runs faster than render; we must throttle to render speed.
+            // Spin until FrameQueue has space. With 16-frame capacity and
+            // nextFrame called BEFORE syncVideo, blocking should be ~1ms.
             static int vCnt = 0; ++vCnt;
+            using namespace std::chrono;
+            auto vDecodeTime = steady_clock::now();
             while (!m_videoFrmQueue->pushFrame(frame)) {
                 if (m_abortRequested.load(std::memory_order_acquire)) break;
-                std::this_thread::sleep_for(std::chrono::microseconds(500));
+                std::this_thread::sleep_for(microseconds(200));
             }
-            if (vCnt <= 5 || vCnt % 50 == 0)
-                LOGD_VIDEO("decode #%d pts=%.4fs fq=%zu/%zu",
-                    vCnt, frame->pts,
-                    m_videoFrmQueue->size(), m_videoFrmQueue->capacity());
+            auto vBlocked = duration<double, std::milli>(steady_clock::now() - vDecodeTime).count();
+            if (vCnt <= 10 || vCnt % 50 == 0) {
+                auto e = duration<double, std::milli>(steady_clock::now() - m_playStart).count();
+                LOGD_VIDEO("#%d T+%.0fms pts=%.1fms fq=%zu blocked=%.1fms",
+                    vCnt, e, frame->pts * 1000.0, m_videoFrmQueue->size(), vBlocked);
+            }
 
             // Allocate a fresh workFrame for the next decode iteration
             workFrame = av_frame_alloc();
@@ -603,29 +612,33 @@ bool PlayerController::pumpEvents()
     if (m_videoStreamIdx >= 0 && m_videoFrmQueue) {
         std::shared_ptr<Frame> newFrame;
         if (m_videoFrmQueue->peekFrame(newFrame)) {
+            // Advance queue IMMEDIATELY (before syncVideo may sleep).
+            // This frees a slot for the decode thread now, not 100ms later.
+            m_videoFrmQueue->nextFrame();
+
             auto action = m_avSync.syncVideo(newFrame);
 
-            static int rCnt = 0; ++rCnt;
-            const char* actStr = "RENDER";
-            if (action == AVSyncEngine::SyncAction::Drop) actStr = "DROP";
-            else if (action == AVSyncEngine::SyncAction::Sleep) actStr = "SLEEP";
+            static int rCnt = 0, dCnt = 0; ++rCnt;
+            using namespace std::chrono;
+            auto e = duration<double, std::milli>(steady_clock::now() - m_playStart).count();
+            double aClk = m_clockMgr.audioClock()->getClock();
+            double diffMs = (newFrame->pts - aClk) * 1000.0;
 
-            if (rCnt <= 10 || rCnt % 50 == 0)
-                LOGD_AV("render #%d pts=%.4fs clock=%.4fs diff=%.1fms -> %s fq=%zu",
-                    rCnt, newFrame->pts,
-                    m_clockMgr.audioClock()->getClock(),
-                    (newFrame->pts - m_clockMgr.audioClock()->getClock()) * 1000.0,
-                    actStr, m_videoFrmQueue->numRemaining());
+            const char* actStr = (action == AVSyncEngine::SyncAction::Drop) ? "DROP" : "RENDER";
+
+            if (action == AVSyncEngine::SyncAction::Drop || rCnt <= 15 || rCnt % 50 == 0)
+                LOGD_AV("#%d T+%.0fms pts=%.1fms clk=%.1fms diff=%+.1fms -> %s R=%d D=%d fq=%zu",
+                    rCnt, e, newFrame->pts * 1000.0, aClk * 1000.0,
+                    diffMs, actStr, rCnt - dCnt, dCnt, m_videoFrmQueue->numRemaining());
 
             if (action == AVSyncEngine::SyncAction::Drop) {
-                m_videoFrmQueue->nextFrame();
+                ++dCnt;
             } else {
                 AVFrame* avf = newFrame->frame.get();
                 if (avf && avf->data[0]) {
                     m_videoRenderer.render(avf);
                     notifyProgress_();
                 }
-                m_videoFrmQueue->nextFrame();
             }
         }
     }
