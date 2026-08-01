@@ -31,6 +31,70 @@
 
 主线程渲染需要解码结果，但两者通过 `FrameQueue` 解耦：解码线程生产 Frame 入队，主线程消费 Frame 出队渲染。
 
+**核心代码对比:**
+
+`api/player.h` — 新增 pumpEvents() 接口:
+```diff
++  /// 主线程事件泵 — 调用者需在帧循环中周期性调用此方法.
++  /// 处理 SDL 事件轮询 + 视频帧渲染 (必须在主线程调用, X11 要求).
++  /// @return true 窗口仍然打开, false 窗口已关闭
++  virtual bool pumpEvents() = 0;
+```
+
+`full_player/main.cpp` — 主循环从单纯 sleep 改为 pumpEvents:
+```diff
+-  while(g_run){
+-    auto s=p->getState();
+-    if(s==PlayerState::Completed||s==PlayerState::Error)break;
+-    std::this_thread::sleep_for(100ms);
+-  }
++  // Main loop — pump SDL events + render frames (X11 requires main thread)
++  while (g_run) {
++    auto s = p->getState();
++    if (s == PlayerState::Completed || s == PlayerState::Error) break;
++    if (!p->pumpEvents()) break;  // window closed
++    std::this_thread::sleep_for(2ms);
++  }
+```
+
+`sdl_video_renderer.cpp` — SDL_PollEvent 从 render() 移到 pollEvents():
+```diff
+-  SDL_RenderClear(m_renderer);
+-  SDL_RenderCopy(m_renderer, m_texture, nullptr, nullptr);
+-  SDL_RenderPresent(m_renderer);
+-
+-  SDL_Event e; while(SDL_PollEvent(&e)) { if(e.type==SDL_QUIT) destroy(); }
+-  return 0;
++  SDL_RenderClear(m_renderer);
++  SDL_RenderCopy(m_renderer, m_texture, nullptr, nullptr);
++  SDL_RenderPresent(m_renderer);
++  return 0;
+...
++bool SDLVideoRenderer::pollEvents() {
++  if (!m_window) return false;
++  SDL_Event e;
++  while (SDL_PollEvent(&e)) {
++    if (e.type == SDL_QUIT) {
++      destroy();
++      return false;
++    }
++  }
++  return true;
++}
+```
+
+PlayerController — `videoDecodeLoop_` 不再负责渲染（去掉 `videoRenderLoop_`）:
+```diff
+-  if (m_videoStreamIdx >= 0) {
+-      m_videoDecodeThread = std::make_unique<std::thread>(&PlayerController::videoDecodeLoop_, this);
+-      m_videoRenderThread = std::make_unique<std::thread>(&PlayerController::videoRenderLoop_, this);
+-  }
++  if (m_videoStreamIdx >= 0) {
++      m_videoDecodeThread = std::make_unique<std::thread>(&PlayerController::videoDecodeLoop_, this);
++      // Video rendering happens on main thread via pumpEvents()
++  }
+```
+
 ---
 
 ## 问题 2: 完全无声音
@@ -71,6 +135,62 @@ open() → stop() → m_audioRenderer.destroy() → SDL_QuitSubSystem(SDL_INIT_A
 3. 移除 renderer 中的 `SDL_QuitSubSystem`
 4. `~PlayerController` 统一 `SDL_Quit()`
 
+**核心代码对比:**
+
+`player_controller.cpp` — SDL 生命周期集中管理:
+```diff
+ PlayerController::PlayerController()
+-    { changeState_(PlayerState::Idle); }
++    : m_avSync(m_clockMgr)
++{
++    // Unified SDL init — audio+video together, avoids PulseAudio/X11 conflict
++    SDL_Init(SDL_INIT_AUDIO | SDL_INIT_VIDEO);
++    ...
++}
+
+ PlayerController::~PlayerController()
+ {
+     stop();
+     teardown_();
++    SDL_Quit(); // centralized SDL cleanup
+ }
+```
+
+`sdl2_audio_renderer.cpp` — 移除 SDL_QuitSubSystem:
+```diff
+ SDL2AudioRenderer::SDL2AudioRenderer() {
+-  SDL_InitSubSystem(SDL_INIT_AUDIO);
+   m_ringBuffer = std::make_unique<AudioRingBuffer>();
+ }
+
+ void SDL2AudioRenderer::destroy() {
+   ...
+   m_ringBuffer->clear();
+-  SDL_QuitSubSystem(SDL_INIT_AUDIO);
++  // SDL_QuitSubSystem handled centrally by PlayerController
+ }
+```
+
+`sdl_video_renderer.cpp` — 同样移除:
+```diff
+ void SDLVideoRenderer::destroy() {
+   ...
+-  SDL_QuitSubSystem(SDL_INIT_VIDEO);
++  // SDL_QuitSubSystem handled centrally by PlayerController
+ }
+```
+
+`player_controller.cpp` — 音频设备在视频窗口之前打开:
+```diff
++        // Eagerly open audio device BEFORE video window creation.
++        // On Linux/PulseAudio, SDL_CreateWindow can interfere with
++        // subsequent audio device opening. Opening audio first avoids this.
++        m_audioRenderer.openDevice(
++            outRate, outCh, static_cast<AVSampleFormat>(outFmt));
++
+         // ... video pipeline init (SDL_CreateWindow happens later) ...
+```
+
 ---
 
 ## 问题 3: 音频变调/音色异常
@@ -93,6 +213,43 @@ open() → stop() → m_audioRenderer.destroy() → SDL_QuitSubSystem(SDL_INIT_A
 ### 解决方案
 1. **采样率同步**：`openDevice()` 通过引用参数把 SDL 设备的**实际**采样率传回，`AudioResampler` 使用该值初始化
 2. **Ring buffer 背压**：`render()` 中改为 `while (m_ringBuffer->writable() < bytes) SDL_Delay(1)`，阻塞等待直到有空间，不再丢帧
+
+**核心代码对比:**
+
+`sdl2_audio_renderer.cpp` — SDL_AUDIO_ALLOW_ANY_CHANGE → 精确匹配:
+```diff
+   SDL_AudioSpec obtained;
+-  m_deviceId = SDL_OpenAudioDevice(nullptr, 0, &desired, &obtained,
+-                                    SDL_AUDIO_ALLOW_ANY_CHANGE);
++  // Don't use SDL_AUDIO_ALLOW_ANY_CHANGE — we want exact format match
++  m_deviceId = SDL_OpenAudioDevice(nullptr, 0, &desired, &obtained, 0);
+```
+
+`sdl2_audio_renderer.cpp` — render() 非阻塞丢帧 → 阻塞背压:
+```diff
+   int bytes = av_get_bytes_per_sample(
+       static_cast<AVSampleFormat>(frame->format), 1);
+   if (bytes <= 0) return 0;
+
+-  size_t written = m_ringBuffer->write(frame->data[0], static_cast<size_t>(bytes));
+-  return written > 0 ? 0 : -1;
++  // Block until ring buffer has space (don't drop audio frames)
++  while (m_ringBuffer->writable() < static_cast<size_t>(bytes)) {
++    SDL_Delay(1);
++  }
++  m_ringBuffer->write(frame->data[0], static_cast<size_t>(bytes));
++  return 0;
+```
+
+sdl2_audio_renderer — openDevice 返回实际采样率:
+```diff
+-int SDL2AudioRenderer::openDevice_(AVFrame* frame) {
++int SDL2AudioRenderer::openDevice(int& sampleRate, int channels, AVSampleFormat fmt) {
+   ...
++  sampleRate = obtained.freq;  // pass back to caller for resampler config
+   return 0;
+ }
+```
 
 ---
 
@@ -118,6 +275,35 @@ else nextFrameTime = now;
 ### 解决方案
 改为每帧独立计时：渲染帧前记录 `t0`，渲染后计算 `elapsed`，sleep `frameDuration - elapsed`。逻辑简单，和 `minimal_av` 完全一致，不受帧间累积误差影响。
 
+**核心代码对比:**
+
+`full_player/main.cpp` — static 变量帧率控制 → pumpEvents + syncVideo:
+```diff
+-  while(g_run){
+-    auto s=p->getState();
+-    if(s==PlayerState::Completed||s==PlayerState::Error)break;
+-    std::this_thread::sleep_for(100ms);
+-  }
++  // Main loop — pump SDL events + render frames (X11 requires main thread)
++  while (g_run) {
++    auto s = p->getState();
++    if (s == PlayerState::Completed || s == PlayerState::Error) break;
++    if (!p->pumpEvents()) break;  // window closed
++    std::this_thread::sleep_for(2ms);
++  }
+```
+
+PlayerController — `pumpEvents()` 中 syncVideo 负责帧率控制:
+```cpp
+// syncVideo 内部决策:
+//   diff < tolerance → Render (正常显示)
+//   diff > tolerance (视频超前) → Sleep → Render (等待音频追上)
+//   diff < -drop_threshold (视频严重落后) → Drop (丢帧追赶)
+auto action = m_avSync.syncVideo(newFrame);
+```
+
+旧的 `videoRenderLoop_` 被完全移除 — 渲染统一由主线程 `pumpEvents()` 驱动，帧率由 AVSyncEngine 根据音频时钟自动调节。
+
 ---
 
 ## 其他修复
@@ -129,8 +315,58 @@ StateMachine 需要但缺失的事件类型：
 - `Stopped` — 线程全部退出
 - `SeekComplete` — seek 完成通知
 
+**核心代码对比:**
+
+`core/event/event_types.h`:
+```diff
+ enum class EventType {
+     // Playback events
++    Open,         // open(url) called
+     Play,
+     Pause,
+     Stop,
+     Seek,
++    SeekComplete, // seek finished, new position ready
+     EOS,
+     Buffering,
+     BufferingEnd,
+@@
+     StateChanged,
+     Error,
+     Info,
++    Retry,        // user retry after error
++    Stopped,      // all threads exited, resources released
+
+     // Media events
+     MediaLoaded,
+```
+
 ### Frame.h MediaType 冲突
 `core/memory/frame.h` 和 `api/player_types.h` 各自定义了 `enum class MediaType`，且 `frame.h` 版本多了 `Data` 值。编译时产生重定义错误。修复：`frame.h` 移除重复枚举，改为 `#include "api/player_types.h"`（Core → API 的依赖是已存在的，`clock_manager.h` 已有同样依赖）。
+
+**核心代码对比:**
+
+`core/memory/frame.h`:
+```diff
++#include "api/player_types.h"
++
+ #include <cstdint>
+ #include <memory>
+
+ struct AVFrame;
+
+ namespace player {
+
+-enum class MediaType {
+-    Unknown,
+-    Video,
+-    Audio,
+-    Subtitle,
+-    Data
+-};
+-
+ struct Frame {
+```
 
 ### CMake 构建修复
 - `/usr/local` 安装的 FFmpeg 是静态库且无 `-fPIC`，无法链接共享库 → 设 `BUILD_SHARED_LIBS=OFF`
@@ -183,6 +419,34 @@ pumpEvents()                           demuxLoop_()
 4. **丢帧全量输出**：每帧 DROP 都打印，不采样
 5. **文件名+行号**：每行日志带 `文件名:行号`
 
+**核心代码对比:**
+
+`utils/logger/logger.h` — 新增通道化日志宏:
+```diff
++// ── 通道化日志宏（用于 AV 同步调试）────────────────────────────────────────
++// 使用方式: LOGD_AV("frame pts=%.3f clock=%.3f", fPts, clk);
++// 运行时可过滤: Logger::instance().setTagLevel("avsync", LogLevel::Debug);
++
++#define LOGD_TAG(tag, fmt, ...) \
++    player::Logger::instance().log(tag, player::LogLevel::Debug, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
++
++#define LOGD_AV(fmt, ...)     LOGD_TAG("avsync", fmt, ##__VA_ARGS__)
++#define LOGD_AUDIO(fmt, ...)  LOGD_TAG("audio",  fmt, ##__VA_ARGS__)
++#define LOGD_VIDEO(fmt, ...)  LOGD_TAG("video",  fmt, ##__VA_ARGS__)
++#define LOGD_CLOCK(fmt, ...)  LOGD_TAG("clock",  fmt, ##__VA_ARGS__)
++#define LOGD_RENDER(fmt, ...) LOGD_TAG("render", fmt, ##__VA_ARGS__)
+```
+
+`utils/logger/logger.h` — 支持 per-tag 级别过滤:
+```diff
++    void setTagLevel(const std::string& tag, LogLevel level);
++    bool isEnabled(const char* tag, LogLevel level) const;
++    void log(const char* tag, LogLevel level, const char* file, int line,
++             const char* fmt, ...);
+...
++    std::map<std::string, LogLevel> tagLevels_; // per-tag level overrides
+```
+
 ### 排查过程（日志驱动）
 
 **第一轮排查：确认帧级数据流。**
@@ -217,6 +481,18 @@ video #50 T+7084ms pts=16480ms fq=5/5 ← 7 秒后才产生新帧!
 
 修复：改为 `m_readIndex > 0`（每消费 1 帧立即清理），解码线程不再空等。
 
+**核心代码对比:**
+
+`core/queue/frame_queue.h` — shrink 阈值:
+```diff
+   void shrinkIfNeeded_() {
+-    if (m_readIndex > m_capacity / 2) {
++    if (m_readIndex > 0) {
+       m_queue.erase(m_queue.begin(), m_queue.begin() + m_readIndex);
+       m_readIndex = 0;
+     }
+```
+
 **第三轮排查：修复后队列阻塞仍严重。**
 
 缩小阈值后，阻塞时间从 285ms 降到 ~42ms，但问题依然存在——因为 `nextFrame()` 在 `syncVideo()`（可能 sleep 100ms）**之后**才调用，解码线程在 syncVideo 期间仍然阻塞。
@@ -224,6 +500,34 @@ video #50 T+7084ms pts=16480ms fq=5/5 ← 7 秒后才产生新帧!
 **根因二：nextFrame 调用时机太晚。** `peekFrame` → `syncVideo`(sleep) → `render` → `nextFrame`(释放槽位)。syncVideo 期间队列满，解码线程空等。
 
 修复：`nextFrame()` 移到 `peekFrame()` 之后**即刻**调用，不等渲染完成。`shared_ptr` 保证帧数据存活。
+
+**核心代码对比:**
+
+`player_controller.cpp` — pumpEvents() 中 nextFrame 提前:
+```diff
+ bool PlayerController::pumpEvents()
+ {
+     if (m_videoStreamIdx >= 0 && m_videoFrmQueue) {
+         std::shared_ptr<Frame> newFrame;
+         if (m_videoFrmQueue->peekFrame(newFrame)) {
++            // Advance queue IMMEDIATELY (before syncVideo may sleep).
++            // This frees a slot for the decode thread now, not 100ms later.
++            m_videoFrmQueue->nextFrame();
++
+             auto action = m_avSync.syncVideo(newFrame);
+
+             if (action == AVSyncEngine::SyncAction::Drop) {
+-                m_videoFrmQueue->nextFrame();
+             } else {
+                 AVFrame* avf = newFrame->frame.get();
+                 if (avf && avf->data[0]) {
+                     m_videoRenderer.render(avf);
+                 }
+-                m_videoFrmQueue->nextFrame();
+             }
+         }
+     }
+```
 
 **第四轮排查：上游 PacketQueue 堆积。**
 
@@ -236,6 +540,23 @@ video #50 T+7084ms pts=16480ms fq=5/5 ← 7 秒后才产生新帧!
 **根因三：解封装线程脱离控制。** demux 线程以全速运行，PacketQueue（容量 256）缓冲了 10 秒的视频包。解码线程被 FrameQueue 节流后，消费的是这些"未来"包——其 PTS 远超当前音频时钟。渲染时 syncVideo 发现视频超前 10+ 秒，sleep 100ms 后强制渲染 → 视频跳变。
 
 修复：在视频解码循环中，发包前检查包的 PTS 是否超过音频时钟 2 秒以上，超过则丢弃（`continue`）。这使解码管线始终贴近音频位置。
+
+**核心代码对比:**
+
+`player_controller.cpp` — videoDecodeLoop_ 中超前包过滤:
+```diff
++        // Skip packets more than 2s ahead of audio clock.
++        // This keeps the decode pipeline close to real time and
++        // prevents the video from jumping 10+ seconds ahead.
++        double pktPts = pkt->pts * av_q2d(m_demuxer.formatContext()
++            ->streams[m_videoStreamIdx]->time_base);
++        double aClk = m_clockMgr.audioClock()->getClock();
++        if (pktPts - aClk > 2.0) {
++            static int sSkip = 0;
++            if (++sSkip <= 5) LOGD_VIDEO("skip pkt pts=%.1fms clk=%.1fms (>2s ahead)", pktPts*1000, aClk*1000);
++            continue;
++        }
+```
 
 ### 最终效果
 
@@ -263,7 +584,20 @@ video #50 T+7084ms pts=16480ms fq=5/5 ← 7 秒后才产生新帧!
 ### 配套修改
 
 - FrameQueue 容量从 5 增加到 16（吸收解码抖动）
+
+```diff
+-  m_videoFrmQueue = std::make_shared<FrmQueue>(
+-      static_cast<size_t>(m_config.misc.video_frm_q_size));
++  m_videoFrmQueue = std::make_shared<FrmQueue>(16); // big enough to absorb bursts
+```
+
 - 解码线程自旋 sleep 从 500µs 降到 200µs（减少空转损失）
+
+```diff
+-  std::this_thread::sleep_for(std::chrono::microseconds(500));
++  std::this_thread::sleep_for(microseconds(200));
+```
+
 - 新增 `LOGD_*` 通道化日志宏，支持 per-tag 过滤
 - `minimal_audio`/`minimal_av` 诊断 demo 程序
 
@@ -303,6 +637,19 @@ video #50 T+7084ms pts=16480ms fq=5/5 ← 7 秒后才产生新帧!
 - 症状: av_frame_get_buffer / av_samples_alloc 返回 EINVAL(-22)
 - 根因: `/usr/local` 的 FFmpeg 7.x 和系统 FFmpeg 6.1 的 .so 同时链接
 - 解决: CMake 中 `set(ENV{PKG_CONFIG_PATH} /usr/lib/x86_64-linux-gnu/pkgconfig)` 强制系统 pkg-config
+
+**核心代码对比:**
+
+`CMakeLists.txt`:
+```diff
+-# FFmpeg
++# FFmpeg — force system install to avoid /usr/local ABI conflicts
++set(ENV{PKG_CONFIG_PATH} "/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig")
+ pkg_check_modules(FFMPEG REQUIRED
+-  libavformat libavcodec libavutil libswscale libswresample libavfilter)
++  libavformat libavcodec libavutil libswscale libswresample)
++unset(ENV{PKG_CONFIG_PATH})
+```
 
 ### 2026-07-29 视频管线尝试（未完成）
 - 从源码构建 GLFW 3.4 → `external/glfw/build/src/libglfw3.a`

@@ -17,7 +17,6 @@ namespace player {
 // Forward declarations
 struct Frame;          // from core/memory/frame.h
 class ClockManager;    // from core/clock/clock_manager.h
-class EventBus;        // from core/event/event_bus.h
 
 /// @brief Seek 请求处理器
 ///
@@ -41,17 +40,13 @@ public:
         std::function<void()> flushAudioDecoder;
         std::function<void()> flushVideoDecoder;
 
-        /// Clocks
-        std::shared_ptr<ClockManager>      clockMgr;
+        /// Clocks (non-owning reference — caller ensures lifetime > SeekHandler)
+        ClockManager* clockMgr = nullptr;
 
         /// Queues
         std::shared_ptr<PacketQueueType>   videoPktQueue;
         std::shared_ptr<PacketQueueType>   audioPktQueue;
         std::shared_ptr<FrameQueueType>    videoFrmQueue;
-        std::shared_ptr<FrameQueueType>    audioFrmQueue;
-
-        /// Event bus for notifications
-        std::shared_ptr<EventBus>          eventBus;
     };
 
     explicit SeekHandler(const Dependencies& deps);
@@ -71,7 +66,6 @@ public:
 private:
     void flushQueues_();
     void flushDecoders_();
-    void notifySeekComplete_(int64_t position_ms);
 
     Dependencies m_deps;
     std::atomic<bool>    m_seeking{false};

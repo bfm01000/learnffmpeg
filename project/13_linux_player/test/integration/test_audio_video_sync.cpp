@@ -1,6 +1,6 @@
 /// @brief Audio/video sync integration tests
 
-#include "player_controller.h"
+#include "control/player_controller/player_controller.h"
 #include <gtest/gtest.h>
 
 namespace player {

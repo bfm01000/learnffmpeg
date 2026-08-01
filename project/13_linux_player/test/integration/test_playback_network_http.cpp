@@ -1,6 +1,6 @@
 /// @brief HTTP network stream integration tests
 
-#include "player_controller.h"
+#include "control/player_controller/player_controller.h"
 #include <gtest/gtest.h>
 
 namespace player {

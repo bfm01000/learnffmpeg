@@ -1,5 +1,5 @@
-#include "frame_queue.h"
-#include "frame.h"
+#include "core/queue/frame_queue.h"
+#include "core/memory/frame.h"
 #include <gtest/gtest.h>
 
 namespace player {

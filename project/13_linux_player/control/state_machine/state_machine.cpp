@@ -71,29 +71,41 @@ StateMachine::StateMachine()
 
 bool StateMachine::transit(EventType event)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    // Copy listeners outside lock to prevent deadlock:
+    // a listener callback that calls back into getState()/transit()
+    // would block on mutex_ — holding it during notification is unsafe.
+    std::vector<StateListener> listenersCopy;
+    const Transition* t = nullptr;
+    PlayerState old_state;
+    PlayerState new_state;
 
-    const Transition* t = findTransition(event);
-    if (!t) {
-        return false;
-    }
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
 
-    if (t->from != state_) {
-        return false;
-    }
+        t = findTransition(event);
+        if (!t) {
+            return false;
+        }
 
-    PlayerState old_state = state_;
-    state_ = t->to;
+        if (t->from != state_) {
+            return false;
+        }
 
-    // Execute action if present
-    if (t->action) {
-        t->action();
-    }
+        old_state = state_;
+        state_ = t->to;
+        new_state = state_;
 
-    // Notify listeners (outside lock? No — listeners expect state to be
-    // consistent; holding the lock is correct here.)
-    for (auto& listener : listeners_) {
-        listener(old_state, state_);
+        // Execute action (still under lock — action is internal, should not re-enter StateMachine)
+        if (t->action) {
+            t->action();
+        }
+
+        listenersCopy = listeners_;  // copy under lock
+    }  // release lock before notifying
+
+    // Notify listeners outside the lock — safe re-entrancy
+    for (auto& listener : listenersCopy) {
+        listener(old_state, new_state);
     }
 
     return true;

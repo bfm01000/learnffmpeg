@@ -1,4 +1,4 @@
-#include "seek_handler.h"
+#include "control/seek_handler/seek_handler.h"
 #include <gtest/gtest.h>
 
 namespace player {

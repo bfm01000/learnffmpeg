@@ -29,13 +29,9 @@ namespace player {
 PlayerController::PlayerController()
     : m_avSync(m_clockMgr)
 {
-    // Unified SDL init — audio+video together, avoids PulseAudio/X11 conflict
     SDL_Init(SDL_INIT_AUDIO | SDL_INIT_VIDEO);
-
     setupStateMachine_();
     setupSeekHandler_();
-    m_stateMachine.transit(EventType::Open);
-    m_stateMachine.reset();
 }
 
 PlayerController::PlayerController(const PlayerConfig& config)
@@ -51,7 +47,6 @@ PlayerController::PlayerController(const PlayerConfig& config)
         m_config.sync.max_frame_delay_us,
         m_config.sync.drop_threshold_us,
         m_config.sync.sync_tolerance_us);
-    m_stateMachine.reset();
 }
 
 PlayerController::~PlayerController()
@@ -77,10 +72,7 @@ void PlayerController::setupStateMachine_()
 void PlayerController::setupSeekHandler_()
 {
     SeekHandler::Dependencies deps;
-    deps.clockMgr = std::shared_ptr<ClockManager>(&m_clockMgr,
-        [](ClockManager*) {}); // non-owning
-    deps.eventBus = std::shared_ptr<EventBus>(&m_eventBus,
-        [](EventBus*) {});     // non-owning
+    deps.clockMgr = &m_clockMgr;
 
     deps.demuxSeekTo = [this](int64_t posMs, int /*flags*/) -> bool {
         return m_demuxer.seekTo(posMs) >= 0;
@@ -320,13 +312,10 @@ int PlayerController::initPipeline_(const char* url)
         }
     }
 
-    // Update SeekHandler with actual queue pointers
+    // Update SeekHandler with actual queue pointers (queues don't exist at ctor time)
     {
         SeekHandler::Dependencies deps;
-        deps.clockMgr = std::shared_ptr<ClockManager>(&m_clockMgr,
-            [](ClockManager*) {});
-        deps.eventBus = std::shared_ptr<EventBus>(&m_eventBus,
-            [](EventBus*) {});
+        deps.clockMgr = &m_clockMgr;
         deps.demuxSeekTo = [this](int64_t posMs, int) -> bool {
             return m_demuxer.seekTo(posMs) >= 0;
         };
@@ -490,14 +479,14 @@ void PlayerController::audioDecodeLoop_()
 
             AVFrame* rf = m_audioResampler.convert(f);
             if (rf) {
-                static int aCnt = 0; ++aCnt;
-                if (aCnt <= 5 || aCnt % 100 == 0) {
+                ++m_logCntAudio;
+                if (m_logCntAudio <= 5 || m_logCntAudio % 100 == 0) {
                     using namespace std::chrono;
                     auto e = duration<double, std::milli>(steady_clock::now() - m_playStart).count();
                     double aPts = f->pts * av_q2d(m_demuxer.formatContext()
                         ->streams[m_audioStreamIdx]->time_base);
                     LOGD_AUDIO("#%d T+%.0fms pts=%.1fms samp=%d",
-                        aCnt, e, aPts * 1000.0, rf->nb_samples);
+                        m_logCntAudio, e, aPts * 1000.0, rf->nb_samples);
                 }
                 m_audioRenderer.render(rf);
                 av_frame_free(&rf);
@@ -539,14 +528,11 @@ void PlayerController::videoDecodeLoop_()
         }
 
         // Skip packets more than 2s ahead of audio clock.
-        // This keeps the decode pipeline close to real time and
-        // prevents the video from jumping 10+ seconds ahead.
         double pktPts = pkt->pts * av_q2d(m_demuxer.formatContext()
             ->streams[m_videoStreamIdx]->time_base);
         double aClk = m_clockMgr.audioClock()->getClock();
         if (pktPts - aClk > 2.0) {
-            static int sSkip = 0;
-            if (++sSkip <= 5) LOGD_VIDEO("skip pkt pts=%.1fms clk=%.1fms (>2s ahead)", pktPts*1000, aClk*1000);
+            if (++m_logCntSkip <= 5) LOGD_VIDEO("skip pkt pts=%.1fms clk=%.1fms (>2s ahead)", pktPts*1000, aClk*1000);
             continue;
         }
 
@@ -574,7 +560,7 @@ void PlayerController::videoDecodeLoop_()
 
             // Spin until FrameQueue has space. With 16-frame capacity and
             // nextFrame called BEFORE syncVideo, blocking should be ~1ms.
-            static int vCnt = 0; ++vCnt;
+            ++m_logCntVideo;
             using namespace std::chrono;
             auto vDecodeTime = steady_clock::now();
             while (!m_videoFrmQueue->pushFrame(frame)) {
@@ -582,10 +568,10 @@ void PlayerController::videoDecodeLoop_()
                 std::this_thread::sleep_for(microseconds(200));
             }
             auto vBlocked = duration<double, std::milli>(steady_clock::now() - vDecodeTime).count();
-            if (vCnt <= 10 || vCnt % 50 == 0) {
+            if (m_logCntVideo <= 10 || m_logCntVideo % 50 == 0) {
                 auto e = duration<double, std::milli>(steady_clock::now() - m_playStart).count();
                 LOGD_VIDEO("#%d T+%.0fms pts=%.1fms fq=%zu blocked=%.1fms",
-                    vCnt, e, frame->pts * 1000.0, m_videoFrmQueue->size(), vBlocked);
+                    m_logCntVideo, e, frame->pts * 1000.0, m_videoFrmQueue->size(), vBlocked);
             }
 
             // Allocate a fresh workFrame for the next decode iteration
@@ -618,7 +604,7 @@ bool PlayerController::pumpEvents()
 
             auto action = m_avSync.syncVideo(newFrame);
 
-            static int rCnt = 0, dCnt = 0; ++rCnt;
+            ++m_logCntRender;
             using namespace std::chrono;
             auto e = duration<double, std::milli>(steady_clock::now() - m_playStart).count();
             double aClk = m_clockMgr.audioClock()->getClock();
@@ -626,13 +612,13 @@ bool PlayerController::pumpEvents()
 
             const char* actStr = (action == AVSyncEngine::SyncAction::Drop) ? "DROP" : "RENDER";
 
-            if (action == AVSyncEngine::SyncAction::Drop || rCnt <= 15 || rCnt % 50 == 0)
+            if (action == AVSyncEngine::SyncAction::Drop || m_logCntRender <= 15 || m_logCntRender % 50 == 0)
                 LOGD_AV("#%d T+%.0fms pts=%.1fms clk=%.1fms diff=%+.1fms -> %s R=%d D=%d fq=%zu",
-                    rCnt, e, newFrame->pts * 1000.0, aClk * 1000.0,
-                    diffMs, actStr, rCnt - dCnt, dCnt, m_videoFrmQueue->numRemaining());
+                    m_logCntRender, e, newFrame->pts * 1000.0, aClk * 1000.0,
+                    diffMs, actStr, m_logCntRender - m_logCntDrop, m_logCntDrop, m_videoFrmQueue->numRemaining());
 
             if (action == AVSyncEngine::SyncAction::Drop) {
-                ++dCnt;
+                ++m_logCntDrop;
             } else {
                 AVFrame* avf = newFrame->frame.get();
                 if (avf && avf->data[0]) {

@@ -1,8 +1,6 @@
 #include "seek_handler.h"
 
 #include "core/clock/clock_manager.h"
-#include "core/event/event_bus.h"
-#include "core/event/event_types.h"
 #include "core/queue/frame_queue.h"
 #include "core/queue/packet_queue.h"
 
@@ -40,16 +38,11 @@ bool SeekHandler::seekTo(int64_t position_ms, int32_t flags)
     }
 
     if (!seek_ok) {
-        // Seek failed — resume clock and report
+        // Seek failed — resume clock and report error
         if (m_deps.clockMgr) {
             m_deps.clockMgr->setPaused(false);
         }
         m_seeking.store(false, std::memory_order_release);
-        // Post seek-failed event
-        if (m_deps.eventBus) {
-            m_deps.eventBus->post(PlayerEvent(EventType::Error,
-                "Seek to " + std::to_string(position_ms) + "ms failed"));
-        }
         return false;
     }
 
@@ -61,9 +54,6 @@ bool SeekHandler::seekTo(int64_t position_ms, int32_t flags)
         m_deps.clockMgr->externalClock()->setClock(new_pts);
         m_deps.clockMgr->setPaused(false);
     }
-
-    // ── 6. Notify ──────────────────────────────────────────────────────
-    notifySeekComplete_(position_ms);
 
     m_seeking.store(false, std::memory_order_release);
     return true;
@@ -82,9 +72,6 @@ void SeekHandler::flushQueues_()
     if (m_deps.videoFrmQueue) {
         m_deps.videoFrmQueue->flush();
     }
-    if (m_deps.audioFrmQueue) {
-        m_deps.audioFrmQueue->flush();
-    }
 }
 
 void SeekHandler::flushDecoders_()
@@ -94,16 +81,6 @@ void SeekHandler::flushDecoders_()
     }
     if (m_deps.flushVideoDecoder) {
         m_deps.flushVideoDecoder();
-    }
-}
-
-void SeekHandler::notifySeekComplete_(int64_t position_ms)
-{
-    if (m_deps.eventBus) {
-        PlayerEvent evt(EventType::SeekComplete,
-            "Seeked to " + std::to_string(position_ms) + "ms");
-        evt.data = position_ms;
-        m_deps.eventBus->post(evt);
     }
 }
 

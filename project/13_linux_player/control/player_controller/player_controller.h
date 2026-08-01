@@ -114,7 +114,13 @@ private:
     bool   m_loop        = false;
     double m_speed       = 1.0;
     std::chrono::steady_clock::time_point m_playStart{}; // play() wall time
-    std::chrono::steady_clock::time_point m_nextVTime{}; // frame pacing
+
+    // ── Per-instance log counters (was static locals — shared across instances) ─
+    int m_logCntAudio  = 0;  // audio decode frame counter
+    int m_logCntVideo  = 0;  // video decode frame counter
+    int m_logCntRender = 0;  // rendered frame counter
+    int m_logCntDrop   = 0;  // dropped frame counter
+    int m_logCntSkip   = 0;  // skipped packet counter (ahead of clock)
 };
 
 } // namespace player

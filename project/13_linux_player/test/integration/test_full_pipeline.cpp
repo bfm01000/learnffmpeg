@@ -1,7 +1,7 @@
 /// @brief End-to-end pipeline test: open → decode → render lifecycle
 
-#include "player_controller.h"
-#include "player_config.h"
+#include "control/player_controller/player_controller.h"
+#include "api/player_config.h"
 #include <gtest/gtest.h>
 
 namespace player {

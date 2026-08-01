@@ -141,6 +141,19 @@ void SDL2AudioRenderer::destroy() {
 
 // ── SDL Callback ────────────────────────────────────────────────────────
 
+/// @brief SDL 音频回调 — 由 SDL 后台线程调用，声卡需要下一段 PCM 数据时触发.
+///
+/// 此函数签名由 SDL 库规定（SDL_AudioCallback 类型）：
+///
+/// @param userdata  打开设备时传入的自定义指针（desired.userdata = this），
+///                  即 SDL2AudioRenderer 实例指针.
+/// @param stream    SDL 分配的音频输出缓冲区，必须向其中写入 len 字节的 PCM 数据.
+///                  不足部分应填 0（静音），SD​L 不会自动清零.
+/// @param len       需要写入 stream 的字节数.
+///                  = sample_rate × channels × bytes_per_sample × callback_interval.
+///                  例如: 44100 × 2 × 2 × ~23ms ≈ 4096 bytes.
+///
+/// @note 回调运行在 SDL 内部线程（非调用者线程），必须快速返回，不能做 I/O、锁等待.
 void SDL2AudioRenderer::sdlCallback_(void* userdata, Uint8* stream, int len) {
   auto* self = static_cast<SDL2AudioRenderer*>(userdata);
   self->onAudioCallback_(stream, len);
