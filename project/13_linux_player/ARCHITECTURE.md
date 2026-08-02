@@ -332,7 +332,7 @@ Demux ──[PacketQueue(Video)]──► VideoDecoder ──[FrameQueue(Video)]
 │ │+getStreamInfo│ │   │ │+flush()      │ │   │ │+destroy()    │ │
 │ │+close()      │ │   │ │+close()      │ │   │ └──────────────┘ │
 │ └──────┬───────┘ │   │ └──────┬───────┘ │   │        △         │
-│        △         │   │        △         │   │   ┌────┴────┐    │
+│        △         │   │        △         │   │   ┌────┴────┐   │
 │ ┌──────┴───────┐ │   │ ┌──────┴───────┐ │   │ ┌─┴───┐ ┌──┴──┐ │
 │ │FFmpegSource  │ │   │ │VideoDecoder  │ │   │ │Open │ │SDL2 │ │
 │ ├──────────────┤ │   │ ├──────────────┤ │   │ │GL   │ │Audio│ │
