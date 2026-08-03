@@ -42,17 +42,17 @@ public:
     void close();
 
 private:
-    SwsContext* sws_ctx_{nullptr};
+    SwsContext* m_swsCtx{nullptr};
 
-    int src_w_{0};
-    int src_h_{0};
-    AVPixelFormat src_fmt_{AV_PIX_FMT_NONE};
-    int dst_w_{0};
-    int dst_h_{0};
-    AVPixelFormat dst_fmt_{AV_PIX_FMT_NONE};
+    int m_srcW{0};
+    int m_srcH{0};
+    AVPixelFormat m_srcFmt{AV_PIX_FMT_NONE};
+    int m_dstW{0};
+    int m_dstH{0};
+    AVPixelFormat m_dstFmt{AV_PIX_FMT_NONE};
 
     // GPU shader-based path (future)
-    bool use_gpu_path_{false};
+    bool m_useGpuPath{false};
 };
 
 } // namespace player

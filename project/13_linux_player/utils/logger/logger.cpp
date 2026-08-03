@@ -1,14 +1,24 @@
+/// Logger — spdlog-based logging with channel support.
+/// Singleton pattern (pending removal per CLAUDE.md, kept for backward compat).
+
 #include "logger.h"
 
-#include <algorithm>
-#include <chrono>
-#include <cstring>
-#include <ctime>
-#include <iomanip>
+#include <spdlog/sinks/basic_file_sink.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
+#include <spdlog/spdlog.h>
+
 #include <map>
-#include <sstream>
+#include <memory>
+#include <mutex>
+#include <string>
 
 namespace player {
+
+namespace {
+    std::shared_ptr<spdlog::logger> g_logger;
+    std::mutex g_mutex;
+    std::map<std::string, std::shared_ptr<spdlog::logger>> g_tagLoggers;
+} // anonymous namespace
 
 Logger& Logger::instance()
 {
@@ -18,36 +28,44 @@ Logger& Logger::instance()
 
 Logger::Logger()
     : level_(LogLevel::Info)
-    , output_(stderr)  // default to stderr for debugging
 {
+    // Create default stderr logger
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (!g_logger) {
+        g_logger = spdlog::stderr_color_mt("player");
+        g_logger->set_pattern("[%H:%M:%S.%e] [%^%l%$] %v");
+        g_logger->set_level(spdlog::level::info);
+        g_logger->flush_on(spdlog::level::debug);
+    }
 }
 
 Logger::~Logger()
 {
-    if (output_ && output_ != stdout && output_ != stderr) {
-        std::fclose(output_);
-    }
+    spdlog::drop_all();
 }
 
 void Logger::setLevel(LogLevel level)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
     level_ = level;
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (g_logger) {
+        g_logger->set_level(static_cast<spdlog::level::level_enum>(level));
+    }
 }
 
 void Logger::setOutputFile(const std::string& path)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    FILE* new_output = std::fopen(path.c_str(), "a");
-    if (!new_output) {
-        new_output = stderr;
+    std::lock_guard<std::mutex> lock(g_mutex);
+    try {
+        auto sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(path, true);
+        g_logger = std::make_shared<spdlog::logger>("player", sink);
+        g_logger->set_pattern("[%H:%M:%S.%e] [%^%l%$] %v");
+        g_logger->set_level(static_cast<spdlog::level::level_enum>(level_));
+        g_logger->flush_on(spdlog::level::debug);
+    } catch (...) {
+        // Fallback to stderr
+        g_logger = spdlog::stderr_color_mt("player_fallback");
     }
-
-    if (output_ && output_ != stdout && output_ != stderr) {
-        std::fclose(output_);
-    }
-    output_ = new_output;
 }
 
 void Logger::setTagLevel(const std::string& tag, LogLevel level)
@@ -86,52 +104,31 @@ void Logger::log(const char* tag, LogLevel level, const char* file, int line,
 void Logger::vlog(const char* tag, LogLevel level, const char* file, int line,
                   const char* fmt, va_list args)
 {
-    // Level check: per-tag first, then global
+    // Level check
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (tag) {
             auto it = tagLevels_.find(tag);
-            if (it != tagLevels_.end()) {
-                if (level < it->second) return;
-            } else if (level < level_) {
-                return;
-            }
-        } else if (level < level_) {
-            return;
+            if (it != tagLevels_.end() && level < it->second) return;
         }
+        if (level < level_) return;
     }
 
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    // Timestamp
-    auto now = std::chrono::system_clock::now();
-    auto now_c = std::chrono::system_clock::to_time_t(now);
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                  now.time_since_epoch()) % 1000;
-
-    struct tm tm_buf;
-    localtime_r(&now_c, &tm_buf);
-
-    // Format: [HH:MM:SS.mmm] [TAG] [LVL] file:line msg
+    // Format message with optional tag prefix
+    char buf[4096];
+    int off = 0;
     if (tag) {
-        // Extract just the filename from the full path
         const char* fname = strrchr(file, '/');
         fname = fname ? fname + 1 : file;
-
-        std::fprintf(output_, "[%02d:%02d:%02d.%03lld] [%-6s] [%s] %s:%d ",
-            tm_buf.tm_hour, tm_buf.tm_min, tm_buf.tm_sec,
-            static_cast<long long>(ms.count()),
-            tag, levelToString(level), fname, line);
-    } else {
-        std::fprintf(output_, "[%02d:%02d:%02d.%03lld] [%s] %s:%d - ",
-            tm_buf.tm_hour, tm_buf.tm_min, tm_buf.tm_sec,
-            static_cast<long long>(ms.count()),
-            levelToString(level), file, line);
+        off = snprintf(buf, sizeof(buf), "[%-6s] %s:%-4d ", tag, fname, line);
     }
+    vsnprintf(buf + off, sizeof(buf) - off, fmt, args);
 
-    std::vfprintf(output_, fmt, args);
-    std::fprintf(output_, "\n");
-    std::fflush(output_);
+    // Log via spdlog
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (g_logger) {
+        g_logger->log(static_cast<spdlog::level::level_enum>(level), "{}", buf);
+    }
 }
 
 const char* Logger::levelToString(LogLevel level)

@@ -29,6 +29,15 @@ option(ENABLE_PLUGIN_HLS    "Enable HLS protocol plugin"   ON)
 option(ENABLE_SANITIZERS    "Enable ASan / UBSan"          OFF)
 option(ENABLE_LTO           "Enable link-time optimization" OFF)
 
+# ── spdlog (header-only logging) ───────────────────────────────────────────
+include(FetchContent)
+FetchContent_Declare(
+  spdlog
+  GIT_REPOSITORY https://github.com/gabime/spdlog.git
+  GIT_TAG        v1.13.0
+)
+FetchContent_MakeAvailable(spdlog)
+
 # ── Find dependencies ──────────────────────────────────────────────────────
 find_package(PkgConfig REQUIRED)
 

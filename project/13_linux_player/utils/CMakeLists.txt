@@ -13,4 +13,4 @@ add_library(utils OBJECT
 )
 
 target_include_directories(utils PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR})
-target_link_libraries(utils PUBLIC core)
+target_link_libraries(utils PUBLIC core spdlog::spdlog)

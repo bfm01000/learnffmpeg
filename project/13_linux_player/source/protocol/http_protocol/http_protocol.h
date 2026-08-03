@@ -35,17 +35,17 @@ public:
 private:
     std::string buildAVIOOptions() const;
 
-    std::map<std::string, std::string> headers_;
-    int timeout_ms_ = 10000;
-    bool reconnect_ = true;
-    int max_retries_ = 3;
+    std::map<std::string, std::string> m_headers;
+    int m_timeoutMs = 10000;
+    bool m_reconnect = true;
+    int m_maxRetries = 3;
 
     // FFmpeg I/O state
-    AVIOContext* avio_ctx_ = nullptr;
-    AVFormatContext* fmt_ctx_ = nullptr;
-    uint8_t* avio_buffer_ = nullptr;
-    int avio_buffer_size_ = 4096;
-    std::string url_;
+    AVIOContext* m_avioCtx = nullptr;
+    AVFormatContext* m_fmtCtx = nullptr;
+    uint8_t* m_avioBuffer = nullptr;
+    int m_avioBufferSize = 4096;
+    std::string m_url;
 };
 
 } // namespace player

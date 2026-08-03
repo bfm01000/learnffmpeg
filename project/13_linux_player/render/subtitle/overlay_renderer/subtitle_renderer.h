@@ -46,15 +46,15 @@ public:
     void destroy();
 
 private:
-    GLuint overlay_texture_{0};
-    int    window_w_{0};
-    int    window_h_{0};
+    GLuint m_overlayTexture{0};
+    int    m_windowW{0};
+    int    m_windowH{0};
 
     struct SubtitleRect {
         int x{0}, y{0}, w{0}, h{0};
         std::vector<uint8_t> rgba_data;
     };
-    std::vector<SubtitleRect> rects_;
+    std::vector<SubtitleRect> m_rects;
 };
 
 } // namespace player

@@ -3,6 +3,7 @@
 #include "player_config.h"
 #include "player_callback.h"
 #include "player_types.h"
+#include "result.h"
 
 #include <cstdint>
 #include <memory>
@@ -21,29 +22,28 @@ public:
   // ── 生命周期 ──────────────────────────────────────────────────────────
 
   /// 打开媒体资源（本地文件 / 网络流）
-  /// @return 0 成功, <0 失败
-  virtual int open(const char* url) = 0;
+  virtual Result<void> open(const char* url) = 0;
 
   /// 带配置打开
-  virtual int open(const char* url, const PlayerConfig& config) = 0;
+  virtual Result<void> open(const char* url, const PlayerConfig& config) = 0;
 
   // ── 播放控制 ──────────────────────────────────────────────────────────
 
-  virtual int play()             = 0;
-  virtual int pause()            = 0;
-  virtual int stop()             = 0;
+  virtual Result<void> play()             = 0;
+  virtual Result<void> pause()            = 0;
+  virtual Result<void> stop()             = 0;
 
   /// Seek 到指定位置（毫秒）
-  virtual int seek(int64_t position_ms) = 0;
+  virtual Result<void> seek(int64_t position_ms) = 0;
 
   /// 设置播放速度 (0.5x ~ 2.0x)
-  virtual int setSpeed(double speed) = 0;
+  virtual Result<void> setSpeed(double speed) = 0;
 
   /// 设置音量 (0.0 ~ 1.0)
-  virtual int setVolume(float volume) = 0;
+  virtual Result<void> setVolume(float volume) = 0;
 
   /// 循环播放
-  virtual int setLoop(bool loop) = 0;
+  virtual Result<void> setLoop(bool loop) = 0;
 
   // ── 事件泵 ────────────────────────────────────────────────────────────
 
@@ -54,11 +54,11 @@ public:
 
   // ── 查询 ──────────────────────────────────────────────────────────────
 
-  virtual PlayerState getState()       const = 0;
-  virtual int64_t     getPosition()    const = 0;   // ms
-  virtual int64_t     getDuration()    const = 0;   // ms
-  virtual bool        isPlaying()      const = 0;
-  virtual bool        isSeeking()      const = 0;
+  virtual PlayerState  getState()    const = 0;
+  virtual Result<int64_t> getPosition() const = 0;   // ms
+  virtual Result<int64_t> getDuration() const = 0;   // ms
+  virtual bool         isPlaying()   const = 0;
+  virtual bool         isSeeking()   const = 0;
 
   // ── 回调 ──────────────────────────────────────────────────────────────
 

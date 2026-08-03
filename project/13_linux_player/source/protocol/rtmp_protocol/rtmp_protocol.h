@@ -35,17 +35,17 @@ public:
     std::vector<std::string> getSchemes() const override;
 
 private:
-    std::string app_;
-    std::string flash_ver_;
-    std::string swf_url_;
-    std::string page_url_;
-    std::string tcurl_;
-    bool live_ = true;
+    std::string m_app;
+    std::string m_flashVer;
+    std::string m_swfUrl;
+    std::string m_pageUrl;
+    std::string m_tcurl;
+    bool m_live = true;
 
-    AVIOContext* avio_ctx_ = nullptr;
-    uint8_t* avio_buffer_ = nullptr;
-    int avio_buffer_size_ = 4096;
-    std::string url_;
+    AVIOContext* m_avioCtx = nullptr;
+    uint8_t* m_avioBuffer = nullptr;
+    int m_avioBufferSize = 4096;
+    std::string m_url;
 };
 
 } // namespace player

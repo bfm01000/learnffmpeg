@@ -603,6 +603,57 @@ video #50 T+7084ms pts=16480ms fq=5/5 ← 7 秒后才产生新帧!
 
 ---
 
+## 2026-08-02 P0~P2 功能完善
+
+### P0-1: EOS 处理
+
+**问题**：播放结束后解码线程空转，状态机不触发 Completed。
+
+**修复**：
+- 解码线程收到 null sentinel 后 `flush(); break;` 退出，不再 spin-wait
+- 新增 `m_videoEOS`/`m_audioEOS` 原子标志位
+- `pumpEvents()` 检测两端 EOS + FrameQueue 排空 → `transit(EOS)` → Completed
+- 验证：Exit 0 自然退出，状态流转 Ready→Playing→Completed→Stopping→Idle
+
+### P0-2: Seek 功能验证
+
+验证 SeekHandler 全链路正确：
+1. `seekTo(posMs)` — 暂停时钟 → 清空 PacketQueue/FrameQueue → flush decoder → demux.seekTo → 更新三时钟 → 恢复
+2. 解码循环在 seek 期间 sleep 等待（`isSeeking()` 检查）
+
+### P0-3: Loop 模式
+
+`play()` 检测 `Completed + m_loop` → seek(0) + 重置 EOS 标志 + 重启线程 + 时钟归零
+
+### P1-1: API 返回值 `int` → `Result<T>`
+
+- 新建 `api/result.h` — `Result<T>` 模板（`std::variant<T, Error>`）+ `Result<void>` 特化
+- `IPlayer` 所有方法返回值改为 `Result<void>` / `Result<int64_t>`
+- `PlayerController` 同步更新：`return 0` → `return {};` / `return -EINVAL` → `return {ErrorCode::..., "..."}`
+
+### P1-2: 桩文件成员命名 `xxx_` → `m_xxx`
+
+修复文件：
+- `process/color_converter/color_converter.{h,cpp}` — src_w_/dst_w_/sws_ctx_ 等 → m_srcW/m_dstW/m_swsCtx
+- `render/subtitle/overlay_renderer/subtitle_renderer.{h,cpp}` — rects_/overlay_texture_ 等
+- `source/protocol/http_protocol/http_protocol.{h,cpp}` — 全部 fields
+- `source/protocol/rtmp_protocol/rtmp_protocol.{h,cpp}` — 全部 fields
+- `source/protocol/rtsp_protocol/rtsp_protocol.{h,cpp}` — 全部 fields
+
+### P2-1: HTTP 协议处理器
+
+`HttpProtocol::open()` 完整实现：
+- `canHandle()` — URL scheme 检测（http:// / https://）
+- `avio_open2()` 打开 HTTP 流 + `AVDictionary` 配置（user_agent/timeout/reconnect/headers）
+- `avio_close()` 清理
+
+### P2-2: 单元测试补齐
+
+- `test_frame_queue.cpp` — 8 项测试（push/peek/capacity/shrink/flush/prev/multithread），全部通过
+- 累计测试：StateMachine 15 + AVSync 9 + FrameQueue 8 = 32 项
+
+---
+
 ## 2026-07-28 ~ 2026-07-29 工程搭建 & Core/Source/Decode 层
 
 ### 2026-07-28 工程搭建

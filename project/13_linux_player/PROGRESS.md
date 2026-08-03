@@ -13,7 +13,7 @@
 |------|------|------|
 | 架构设计 | ✅ 完成 | ARCHITECTURE.md |
 | 工程脚手架 | ✅ 完成 | 120 个桩文件 + CMake + 脚本 |
-| 规范对照修正 | 🔧 部分完成 | Frame.h MediaType 冲突已修；其余 P2/P3 后续处理 |
+| 规范对照修正 | ✅ 完成 | Frame.h MediaType 冲突 ✅; 桩文件 xxx_→m_xxx ✅; Result<T> 返回值 ✅; Logger 单例⚠(P2) |
 | Demux 模块实现 | ✅ 完成 | |
 | Core 基础设施 | ✅ 完成 | Queue / Clock / Event / Thread / Frame / MemoryPool / PluginManager |
 | Decode 模块 | ✅ 完成 | Video + Audio |

@@ -10,16 +10,16 @@ ColorConverter::~ColorConverter() {
 
 int ColorConverter::init(int in_w, int in_h, AVPixelFormat in_fmt,
                           int out_w, int out_h, AVPixelFormat out_fmt) {
-    src_w_ = in_w;
-    src_h_ = in_h;
-    src_fmt_ = in_fmt;
-    dst_w_ = out_w;
-    dst_h_ = out_h;
-    dst_fmt_ = out_fmt;
+    m_srcW = in_w;
+    m_srcH = in_h;
+    m_srcFmt = in_fmt;
+    m_dstW = out_w;
+    m_dstH = out_h;
+    m_dstFmt = out_fmt;
 
     // TODO: Create SwsContext with sws_getContext() for the CPU path.
     //       For the GPU shader path, compile GLSL color-conversion shaders
-    //       and set use_gpu_path_ = true.
+    //       and set m_useGpuPath = true.
 
     return 0;
 }
@@ -33,7 +33,7 @@ AVFrame* ColorConverter::convert(AVFrame* in_frame) {
 }
 
 void ColorConverter::close() {
-    // TODO: Free sws_ctx_ with sws_freeContext().
+    // TODO: Free m_swsCtx with sws_freeContext().
     //       Destroy GPU shader resources if the GPU path was used.
 }
 

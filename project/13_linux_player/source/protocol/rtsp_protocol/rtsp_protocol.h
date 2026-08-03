@@ -33,15 +33,15 @@ public:
     std::vector<std::string> getSchemes() const override;
 
 private:
-    bool use_tcp_ = true;       // TCP interleaved transport by default
-    std::string user_agent_;
-    int timeout_ms_ = 10000;
-    int buffer_size_ = 0;       // 0 = use FFmpeg default
+    bool m_useTcp = true;       // TCP interleaved transport by default
+    std::string m_userAgent;
+    int m_timeoutMs = 10000;
+    int m_bufferSize = 0;       // 0 = use FFmpeg default
 
-    AVIOContext* avio_ctx_ = nullptr;
-    uint8_t* avio_buffer_ = nullptr;
-    int avio_buffer_size_ = 4096;
-    std::string url_;
+    AVIOContext* m_avioCtx = nullptr;
+    uint8_t* m_avioBuffer = nullptr;
+    int m_avioBufferSize = 4096;
+    std::string m_url;
 };
 
 } // namespace player

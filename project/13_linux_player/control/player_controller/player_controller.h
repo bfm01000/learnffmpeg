@@ -8,6 +8,7 @@ struct AVPacket;  // FFmpeg C type, forward-declared for shared_ptr use
 #include "api/player.h"
 #include "api/player_config.h"
 #include "control/av_sync_engine/av_sync_engine.h"
+#include "control/playlist_manager/playlist_manager.h"
 #include "control/seek_handler/seek_handler.h"
 #include "control/state_machine/state_machine.h"
 #include "core/clock/clock_manager.h"
@@ -35,24 +36,24 @@ public:
     explicit PlayerController(const PlayerConfig& config);
     ~PlayerController() override;
 
-    int  open(const char* url) override;
-    int  open(const char* url, const PlayerConfig& config) override;
-    int  play()    override;
-    int  pause()   override;
-    int  stop()    override;
-    int  seek(int64_t positionMs) override;
-    int  setSpeed(double speed) override;
-    int  setVolume(float volume) override;
-    int  setLoop(bool loop) override;
+    Result<void> open(const char* url) override;
+    Result<void> open(const char* url, const PlayerConfig& config) override;
+    Result<void> play()    override;
+    Result<void> pause()   override;
+    Result<void> stop()    override;
+    Result<void> seek(int64_t positionMs) override;
+    Result<void> setSpeed(double speed) override;
+    Result<void> setVolume(float volume) override;
+    Result<void> setLoop(bool loop) override;
 
     bool pumpEvents() override;
 
-    PlayerState getState()    const override;
-    int64_t     getPosition() const override;
-    int64_t     getDuration() const override;
-    bool        isPlaying()   const override;
-    bool        isSeeking()   const override;
-    void        setCallback(IPlayerCallback* cb) override;
+    PlayerState      getState()    const override;
+    Result<int64_t>  getPosition() const override;
+    Result<int64_t>  getDuration() const override;
+    bool             isPlaying()   const override;
+    bool             isSeeking()   const override;
+    void             setCallback(IPlayerCallback* cb) override;
 
 private:
     int  initPipeline_(const char* url);
@@ -73,10 +74,11 @@ private:
     IPlayerCallback* m_callback = nullptr;
 
     // ── Control infrastructure ─────────────────────────────────────────
-    StateMachine  m_stateMachine;
-    ClockManager  m_clockMgr;
-    AVSyncEngine  m_avSync;
-    EventBus      m_eventBus;
+    StateMachine    m_stateMachine;
+    ClockManager    m_clockMgr;
+    AVSyncEngine    m_avSync;
+    EventBus        m_eventBus;
+    PlaylistManager m_playlist;
     std::unique_ptr<SeekHandler> m_seekHandler;
 
     // ── Pipeline modules ───────────────────────────────────────────────
@@ -101,6 +103,8 @@ private:
     std::unique_ptr<std::thread> m_videoDecodeThread;
 
     std::atomic<bool> m_abortRequested{false};
+    std::atomic<bool> m_videoEOS{false};    // video decode thread reached EOF
+    std::atomic<bool> m_audioEOS{false};    // audio decode thread reached EOF
     bool m_dropVideoUntilKeyframe = false;  // demuxLoop_ 丢帧恢复标志
 
     // ── Stream info ────────────────────────────────────────────────────

@@ -85,37 +85,40 @@ void PlayerController::setupSeekHandler_()
 
 // ── open ─────────────────────────────────────────────────────────────────
 
-int PlayerController::open(const char* url)
+Result<void> PlayerController::open(const char* url)
 {
     return open(url, m_config);
 }
 
-int PlayerController::open(const char* url, const PlayerConfig& config)
+Result<void> PlayerController::open(const char* url, const PlayerConfig& config)
 {
-    if (!url || !*url) return -EINVAL;
+    if (!url || !*url) return {ErrorCode::InvalidArg, "URL is empty"};
 
     stop();
     teardown_();
     m_config = config;
 
+    // Add to playlist (first item auto-selects if playlist was empty)
+    m_playlist.add(url);
+
     if (!m_stateMachine.transit(EventType::Open)) {
-        return -EINVAL;
+        return {ErrorCode::Unknown, "Not in Idle state"};
     }
 
-    int ret = initPipeline_(url);
+    int ret = initPipeline_(m_playlist.current().c_str());
     if (ret < 0) {
         notifyError_("Failed to open media");
         m_stateMachine.transit(EventType::Error);
-        return ret;
+        return {ErrorCode::OpenFailed, "Failed to open media"};
     }
 
     m_stateMachine.transit(EventType::MediaLoaded);
-    return 0;
+    return {};
 }
 
 // ── play / pause / stop ──────────────────────────────────────────────────
 
-int PlayerController::play()
+Result<void> PlayerController::play()
 {
     auto s = m_stateMachine.getState();
     if (s == PlayerState::Ready || s == PlayerState::Paused) {
@@ -123,107 +126,107 @@ int PlayerController::play()
             m_audioRenderer.resume();
             m_clockMgr.setPaused(false);
         } else {
-            // Reset audio clock to 0, THEN unpause audio device.
-            // This ensures the SDL callback starts counting from 0,
-            // matching video frame PTS 0.0.
             m_clockMgr.audioClock()->setClock(0.0);
             m_clockMgr.setPaused(false);
             m_playStart = std::chrono::steady_clock::now();
             LOGD_CLOCK("play: start_time=0ms audio_clock=0.0");
-            if (m_audioStreamIdx >= 0) {
-                m_audioRenderer.resume();
-            }
+            if (m_audioStreamIdx >= 0) m_audioRenderer.resume();
             startThreads_();
         }
         m_stateMachine.transit(EventType::Play);
-        if (m_callback) {
-            m_callback->onPlay();
-        }
-        return 0;
+        if (m_callback) m_callback->onPlay();
+        return {};
     }
     if (s == PlayerState::Completed && m_loop) {
+        m_audioEOS.store(false, std::memory_order_release);
+        m_videoEOS.store(false, std::memory_order_release);
+        m_abortRequested.store(false, std::memory_order_release);
+        m_demuxer.seekTo(0);
+        m_audioDecoder.flush();
+        m_videoDecoder.flush();
+        if (m_videoFrmQueue) m_videoFrmQueue->flush();
+        if (m_audioPktQueue) m_audioPktQueue->flush();
+        if (m_videoPktQueue) m_videoPktQueue->flush();
+        m_clockMgr.audioClock()->setClock(0.0);
+        m_clockMgr.setPaused(false);
+        m_playStart = std::chrono::steady_clock::now();
+        if (m_audioStreamIdx >= 0) m_audioRenderer.resume();
+        startThreads_();
         m_stateMachine.transit(EventType::Play);
-        return 0;
+        if (m_callback) m_callback->onPlay();
+        return {};
     }
-    return -1;
+    return {ErrorCode::Unknown, "Cannot play in current state"};
 }
 
-int PlayerController::pause()
+Result<void> PlayerController::pause()
 {
     if (m_stateMachine.getState() != PlayerState::Playing) {
-        return -1;
+        return {ErrorCode::Unknown, "Not playing"};
     }
     m_audioRenderer.pause();
     m_clockMgr.setPaused(true);
     m_stateMachine.transit(EventType::Pause);
-    if (m_callback) {
-        m_callback->onPause();
-    }
-    return 0;
+    if (m_callback) m_callback->onPause();
+    return {};
 }
 
-int PlayerController::stop()
+Result<void> PlayerController::stop()
 {
     stopThreads_();
     m_audioRenderer.destroy();
     m_videoRenderer.destroy();
     m_stateMachine.transit(EventType::Stop);
     m_stateMachine.transit(EventType::Stopped);
-    if (m_callback) {
-        m_callback->onStopped();
-    }
-    return 0;
+    if (m_callback) m_callback->onStopped();
+    return {};
 }
 
-// ── seek ─────────────────────────────────────────────────────────────────
-
-int PlayerController::seek(int64_t posMs)
+Result<void> PlayerController::seek(int64_t posMs)
 {
     auto s = m_stateMachine.getState();
     if (s != PlayerState::Playing && s != PlayerState::Paused) {
-        return -1;
+        return {ErrorCode::Unknown, "Can only seek while playing or paused"};
     }
-
-    bool ok = m_seekHandler->seekTo(posMs);
-    if (!ok) {
-        return -1;
+    if (!m_seekHandler->seekTo(posMs)) {
+        return {ErrorCode::Unknown, "Seek failed"};
     }
-
     m_stateMachine.transit(EventType::Seek);
-    return 0;
+    return {};
 }
 
-// ── setSpeed / setVolume / setLoop ───────────────────────────────────────
-
-int PlayerController::setSpeed(double speed)
+Result<void> PlayerController::setSpeed(double speed)
 {
-    if (speed < 0.5 || speed > 2.0) return -EINVAL;
+    if (speed < 0.5 || speed > 2.0)
+        return {ErrorCode::InvalidArg, "Speed must be 0.5~2.0"};
     m_speed = speed;
     m_clockMgr.setSpeed(speed);
-    return 0;
+    return {};
 }
 
-int PlayerController::setVolume(float volume)
+Result<void> PlayerController::setVolume(float volume)
 {
-    if (volume < 0.0f || volume > 1.0f) return -EINVAL;
+    if (volume < 0.0f || volume > 1.0f)
+        return {ErrorCode::InvalidArg, "Volume must be 0.0~1.0"};
     m_volume = volume;
-    return 0;
+    return {};
 }
 
-int PlayerController::setLoop(bool loop)
+Result<void> PlayerController::setLoop(bool loop)
 {
     m_loop = loop;
-    return 0;
+    m_playlist.setLoop(loop ? LoopMode::LoopAll : LoopMode::NoLoop);
+    return {};
 }
 
 // ── 查询 ─────────────────────────────────────────────────────────────────
 
-PlayerState PlayerController::getState()    const { return m_stateMachine.getState(); }
-int64_t     PlayerController::getPosition() const { return static_cast<int64_t>(m_clockMgr.masterTime() * 1000.0); }
-int64_t     PlayerController::getDuration() const { return m_durationMs; }
-bool        PlayerController::isPlaying()   const { return getState() == PlayerState::Playing; }
-bool        PlayerController::isSeeking()   const { return m_seekHandler->isSeeking(); }
-void        PlayerController::setCallback(IPlayerCallback* cb) { m_callback = cb; }
+PlayerState    PlayerController::getState()    const { return m_stateMachine.getState(); }
+Result<int64_t> PlayerController::getPosition() const { return static_cast<int64_t>(m_clockMgr.masterTime() * 1000.0); }
+Result<int64_t> PlayerController::getDuration() const { return m_durationMs; }
+bool           PlayerController::isPlaying()   const { return getState() == PlayerState::Playing; }
+bool           PlayerController::isSeeking()   const { return m_seekHandler->isSeeking(); }
+void           PlayerController::setCallback(IPlayerCallback* cb) { m_callback = cb; }
 
 // ── initPipeline_ ─────────────────────────────────────────────────────────
 
@@ -375,6 +378,8 @@ void PlayerController::teardown_()
     m_audioPktQueue.reset();
     m_videoPktQueue.reset();
     m_videoFrmQueue.reset();
+    m_audioEOS.store(false, std::memory_order_release);
+    m_videoEOS.store(false, std::memory_order_release);
     m_audioStreamIdx = m_videoStreamIdx = -1;
     m_durationMs = 0;
 }
@@ -459,8 +464,10 @@ void PlayerController::audioDecodeLoop_()
 
         auto pkt = *opt;
         if (!pkt) {
+            // EOF sentinel — flush decoder and exit thread
             m_audioDecoder.flush();
-            continue;
+            m_audioEOS.store(true, std::memory_order_release);
+            break;
         }
 
         if (m_seekHandler->isSeeking()) continue;
@@ -523,8 +530,10 @@ void PlayerController::videoDecodeLoop_()
 
         auto pkt = *opt;
         if (!pkt) {
+            // EOF sentinel — flush decoder and exit thread
             m_videoDecoder.flush();
-            continue;
+            m_videoEOS.store(true, std::memory_order_release);
+            break;
         }
 
         // Skip packets more than 2s ahead of audio clock.
@@ -594,6 +603,47 @@ bool PlayerController::pumpEvents()
         }
     }
 
+    // EOS detection: all decode threads reached EOF and render queues drained.
+    bool audioEOS = (m_audioStreamIdx < 0) ||
+        m_audioEOS.load(std::memory_order_acquire);
+    bool videoEOS = (m_videoStreamIdx < 0) ||
+        m_videoEOS.load(std::memory_order_acquire);
+    bool queueDrained = !m_videoFrmQueue || m_videoFrmQueue->empty();
+    bool hasContent = (m_audioStreamIdx >= 0 || m_videoStreamIdx >= 0);
+
+    if (audioEOS && videoEOS && queueDrained && hasContent &&
+        m_stateMachine.getState() == PlayerState::Playing) {
+        // Try next track in playlist
+        int64_t nextIdx = m_playlist.next();
+        if (nextIdx >= 0) {
+            // Play next track
+            LOGD_RENDER("EOS — switching to playlist track %lld", (long long)nextIdx);
+            if (m_callback) m_callback->onCompletion();
+
+            teardown_();
+            m_audioEOS.store(false); m_videoEOS.store(false);
+            m_abortRequested.store(false);
+            m_clockMgr.audioClock()->setClock(0.0);
+            m_clockMgr.setPaused(false);
+            m_playStart = std::chrono::steady_clock::now();
+
+            int ret = initPipeline_(m_playlist.current().c_str());
+            if (ret < 0) {
+                m_stateMachine.transit(EventType::EOS);
+                if (m_callback) m_callback->onCompletion();
+                return true;
+            }
+            startThreads_();
+            return true;
+        }
+
+        // No more tracks — real end
+        m_stateMachine.transit(EventType::EOS);
+        LOGD_RENDER("EOS detected — transitioning to Completed");
+        if (m_callback) m_callback->onCompletion();
+        return true;
+    }
+
     // Render one video frame, synced to audio clock (master)
     if (m_videoStreamIdx >= 0 && m_videoFrmQueue) {
         std::shared_ptr<Frame> newFrame;
@@ -645,9 +695,8 @@ void PlayerController::notifyError_(const char* msg)
 void PlayerController::notifyProgress_()
 {
     if (m_callback) {
-        int64_t pos = getPosition();
-        int64_t dur = m_durationMs;
-        m_callback->onProgress(pos, dur);
+        auto pos = getPosition();
+        m_callback->onProgress(pos.valueOr(0), m_durationMs);
     }
 }
 
