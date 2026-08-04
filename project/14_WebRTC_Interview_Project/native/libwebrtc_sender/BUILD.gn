@@ -1,0 +1,51 @@
+import("../../webrtc.gni")
+
+rtc_executable("low_latency_sender") {
+  testonly = true
+  sources = [
+    "main.cpp",
+    "peer_connection_app.cpp",
+    "peer_connection_app.h",
+    "websocket_signaling_client.cpp",
+    "websocket_signaling_client.h",
+  ]
+
+  deps = [
+    "//api:enable_media",
+    "//api:field_trials",
+    "//api:jsep",
+    "//api:make_ref_counted",
+    "//api:peer_connection_interface",
+    "//api:rtc_error",
+    "//api:rtp_receiver_interface",
+    "//api:scoped_refptr",
+    "//api/audio_codecs:builtin_audio_decoder_factory",
+    "//api/audio_codecs:builtin_audio_encoder_factory",
+    "//api:create_frame_generator",
+    "//api:create_modular_peer_connection_factory",
+    "//api/environment",
+    "//api/environment:environment_factory",
+    "//api/video:video_frame",
+    "//api/video_codecs:video_decoder_factory_template",
+    "//api/video_codecs:video_decoder_factory_template_dav1d_adapter",
+    "//api/video_codecs:video_decoder_factory_template_libvpx_vp8_adapter",
+    "//api/video_codecs:video_decoder_factory_template_libvpx_vp9_adapter",
+    "//api/video_codecs:video_decoder_factory_template_open_h264_adapter",
+    "//api/video_codecs:video_encoder_factory_template",
+    "//api/video_codecs:video_encoder_factory_template_libaom_av1_adapter",
+    "//api/video_codecs:video_encoder_factory_template_libvpx_vp8_adapter",
+    "//api/video_codecs:video_encoder_factory_template_libvpx_vp9_adapter",
+    "//api/video_codecs:video_encoder_factory_template_open_h264_adapter",
+    "//media:rtc_audio_video",
+    "//pc:video_track_source",
+    "//rtc_base:checks",
+    "//rtc_base:logging",
+    "//rtc_base:rtc_json",
+    "//rtc_base:ssl_adapter",
+    "//rtc_base:threading",
+    "//system_wrappers",
+    "//test:frame_generator_capturer",
+    "//third_party/abseil-cpp/absl/memory",
+    "//third_party/jsoncpp",
+  ]
+}

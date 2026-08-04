@@ -1,0 +1,32 @@
+# Template for the future WebRTC checkout target.
+# Copy/adapt this under:
+#   /home/bfm01000/workspace/third_party/webrtc-checkout/src/examples/low_latency_sender/BUILD.gn
+
+import("../../webrtc.gni")
+
+rtc_executable("low_latency_sender") {
+  testonly = true
+
+  sources = [
+    "main.cpp",
+    "peer_connection_app.cpp",
+    "peer_connection_app.h",
+    "synthetic_video_source.cpp",
+    "synthetic_video_source.h",
+    "websocket_signaling_client.cpp",
+    "websocket_signaling_client.h",
+  ]
+
+  deps = [
+    "//api:libjingle_peerconnection_api",
+    "//api:make_ref_counted",
+    "//api:scoped_refptr",
+    "//api/environment",
+    "//api/video:video_frame",
+    "//api/video:video_rtp_headers",
+    "//rtc_base:checks",
+    "//rtc_base:logging",
+    "//rtc_base:threading",
+    "//third_party/jsoncpp",
+  ]
+}

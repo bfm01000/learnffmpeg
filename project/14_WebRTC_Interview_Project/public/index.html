@@ -1,0 +1,142 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LowLatency WebRTC Lab</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="topbar">
+        <div>
+          <h1>LowLatency WebRTC Lab</h1>
+          <p>低延迟 WebRTC 实验台：建连、采集、编码参数、链路指标和趋势观察。</p>
+        </div>
+        <div class="connection-state" id="connectionState">idle</div>
+      </section>
+
+      <section class="explain-panel">
+        <h2>这个页面用来验证什么</h2>
+        <p>打开两个标签页并加入同一个房间后，页面会通过 WebSocket 交换 offer / answer / ICE candidate，再由 WebRTC 建立 P2P 视频链路。下面的控件负责控制采集源和编码上限，指标区和图表区负责观察真实链路表现。</p>
+      </section>
+
+      <section class="section-head">
+        <h2>控制区</h2>
+        <p>这里控制一次 WebRTC 实验的输入源、采集规格和发送端编码上限。修改 Max Bitrate 后点击 Apply Encoding，会通过 RTCRtpSender.setParameters 动态限制发送端码率。</p>
+      </section>
+      <section class="controls" aria-label="call controls">
+        <label>
+          Room
+          <small>房间号；两个页面填同一个值才会互相建连。</small>
+          <input id="roomInput" value="lab" autocomplete="off" />
+        </label>
+        <label>
+          Source
+          <small>Camera 使用浏览器摄像头；Test Pattern 使用生成画面隔离采集问题。</small>
+          <select id="sourceSelect">
+            <option value="camera" selected>Camera</option>
+            <option value="pattern">Test Pattern</option>
+          </select>
+        </label>
+        <label>
+          Resolution
+          <small>采集分辨率；影响编码压力、码率需求和画面清晰度。</small>
+          <select id="resolutionSelect">
+            <option value="640x480" selected>640 x 480</option>
+            <option value="1280x720">1280 x 720</option>
+            <option value="320x240">320 x 240</option>
+          </select>
+        </label>
+        <label>
+          FPS
+          <small>采集帧率；帧率越高越流畅，但编码和带宽压力更大。</small>
+          <select id="fpsSelect">
+            <option value="15">15</option>
+            <option value="30" selected>30</option>
+          </select>
+        </label>
+        <label>
+          Max Bitrate
+          <small>发送端目标码率上限，单位 kbps；真实码率还会受拥塞控制影响。</small>
+          <input id="maxBitrateInput" type="number" min="80" max="8000" step="50" value="800" />
+        </label>
+        <label>
+          Strategy
+          <small>Manual 手动调参；Simple ABR 会根据 RTT、jitter、loss 自动调码率。</small>
+          <select id="strategySelect">
+            <option value="manual" selected>Manual</option>
+            <option value="simple-abr">Simple ABR</option>
+          </select>
+        </label>
+        <button id="applyEncodingButton" disabled>Apply Encoding</button>
+        <button id="exportStatsButton" disabled>Export Stats</button>
+        <button id="joinButton">Join</button>
+        <button id="leaveButton" disabled>Leave</button>
+      </section>
+
+      <section class="section-head">
+        <h2>视频区</h2>
+        <p>Local 是本端采集并送入 PeerConnection 的视频；Remote 是对端通过 WebRTC RTP 传过来并由浏览器解码渲染的视频。若 Local 有画面但 Remote 没画面，优先排查信令、ICE 和 track 事件。</p>
+      </section>
+      <section class="video-grid" aria-label="video preview">
+        <div class="video-panel">
+          <div class="panel-title">Local <span>本地采集 / 发送源</span></div>
+          <video id="localVideo" muted autoplay playsinline></video>
+        </div>
+        <div class="video-panel">
+          <div class="panel-title">Remote <span>远端接收 / 解码渲染</span></div>
+          <video id="remoteVideo" autoplay playsinline></video>
+        </div>
+      </section>
+
+      <section class="section-head">
+        <h2>实时指标区</h2>
+        <p>这些数值来自 getStats 和 DataChannel。它们把“卡、糊、慢”拆成可观察指标：网络往返、抖动、丢包、码率、帧率、分辨率、ICE 状态和应用层 RTT。</p>
+      </section>
+      <section class="stats-grid" aria-label="webrtc stats">
+        <div class="stat"><span>RTT</span><strong id="rtt">-</strong><em>ICE 网络路径往返时间，越高互动延迟越明显。</em></div>
+        <div class="stat"><span>Jitter</span><strong id="jitter">-</strong><em>RTP 包到达间隔抖动，越高越容易触发缓冲和卡顿。</em></div>
+        <div class="stat"><span>Packet Loss</span><strong id="packetLoss">-</strong><em>接收端统计的丢包数量，丢包高会影响清晰度和流畅度。</em></div>
+        <div class="stat"><span>Send Bitrate</span><strong id="sendBitrate">-</strong><em>本端实际发送码率，用来判断编码输出和发送 pacing。</em></div>
+        <div class="stat"><span>Recv Bitrate</span><strong id="recvBitrate">-</strong><em>本端实际接收码率，可和 send 对比判断链路损耗。</em></div>
+        <div class="stat"><span>FPS</span><strong id="fps">-</strong><em>编码或解码帧率，下降时可能是编码、网络或渲染压力。</em></div>
+        <div class="stat"><span>Resolution</span><strong id="resolution">-</strong><em>当前视频帧分辨率，决定清晰度和码率需求。</em></div>
+        <div class="stat"><span>ICE</span><strong id="iceState">-</strong><em>ICE 连接状态；connected / completed 表示路径建立成功。</em></div>
+        <div class="stat"><span>Data RTT</span><strong id="dataRtt">-</strong><em>DataChannel ping-pong 应用层 RTT，用来补充网络指标。</em></div>
+        <div class="stat"><span>Target Bitrate</span><strong id="targetBitrate">-</strong><em>手动设置的码率上限；它是目标，不等于真实发送码率。</em></div>
+        <div class="stat"><span>ABR State</span><strong id="abrState">-</strong><em>当前码率策略状态；用于观察自动降码率和恢复过程。</em></div>
+      </section>
+
+      <section class="section-head">
+        <h2>趋势图区</h2>
+        <p>趋势图展示最近 60 秒采样，Export Stats 会导出本次会话全部采样。面试讲解时重点观察“控制量”和“结果量”的关系：target 改了以后 send / recv 是否跟随，RTT / jitter 是否随网络波动变化。</p>
+      </section>
+      <section class="chart-grid" aria-label="stats trend charts">
+        <div class="chart-panel">
+          <div class="panel-title">Bitrate Trend <span>码率趋势</span></div>
+          <canvas id="bitrateChart" width="560" height="180"></canvas>
+          <p class="chart-help">send 表示发送端真实码率，recv 表示接收端统计到的码率，target 表示手动设置的目标上限。用它观察 setParameters 后真实码率是否跟随变化。</p>
+        </div>
+        <div class="chart-panel">
+          <div class="panel-title">Latency Trend <span>延迟 / 抖动趋势</span></div>
+          <canvas id="latencyChart" width="560" height="180"></canvas>
+          <p class="chart-help">rtt 表示 ICE 选中链路的网络往返时间，jitter 表示 RTP 到达间隔抖动。用它观察网络波动、抖动缓冲和卡顿风险。</p>
+        </div>
+      </section>
+
+      <section class="section-head">
+        <h2>事件日志区</h2>
+        <p>这里记录信令和连接状态变化。排查建连问题时按顺序看：是否加入房间、是否发送 offer、是否收到 answer、是否交换 candidate、PeerConnection 是否 connected。</p>
+      </section>
+      <section class="log-panel" aria-label="event log">
+        <div class="panel-title">Events <span>信令 / 状态日志</span></div>
+        <pre id="eventLog"></pre>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
+
+
