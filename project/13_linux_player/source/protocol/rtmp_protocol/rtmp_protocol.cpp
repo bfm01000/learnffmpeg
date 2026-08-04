@@ -33,18 +33,35 @@ void RtmpProtocol::setLive(bool live) {
 }
 
 bool RtmpProtocol::canHandle(const char* url) {
-    // TODO: check if url starts with rtmp://, rtmpe://, rtmps://, rtmpt://, etc.
-    return true;
+    if (!url) return false;
+    std::string u(url);
+    return u.rfind("rtmp", 0) == 0; // rtmp:// rtmpe:// rtmps:// rtmpt://
 }
 
 int RtmpProtocol::open(const char* url) {
-    // TODO: open RTMP stream via FFmpeg's built-in RTMP protocol (libavformat)
-    // 1. Build AVDictionary with RTMP options (rtmp_app, rtmp_flashver, rtmp_swfurl, etc.)
-    // 2. Allocate AVIOContext via avio_open2()
-    // 3. The ffmpeg rtmp protocol is built-in and handles the RTMP handshake
-    // 4. Return 0 on success, negative on error
+    if (!url || !*url) return -1;
+
+    close();
     m_url = url;
-    return -1;
+
+    // Build RTMP options dictionary
+    AVDictionary* opts = nullptr;
+    if (!m_app.empty())      av_dict_set(&opts, "rtmp_app",       m_app.c_str(), 0);
+    if (!m_flashVer.empty()) av_dict_set(&opts, "rtmp_flashver",  m_flashVer.c_str(), 0);
+    if (!m_swfUrl.empty())   av_dict_set(&opts, "rtmp_swfurl",    m_swfUrl.c_str(), 0);
+    if (!m_pageUrl.empty())  av_dict_set(&opts, "rtmp_pageurl",   m_pageUrl.c_str(), 0);
+    if (!m_tcurl.empty())    av_dict_set(&opts, "rtmp_tcurl",     m_tcurl.c_str(), 0);
+    av_dict_set_int(&opts, "rtmp_live", m_live ? 1 : 0, 0);
+
+    // FFmpeg has built-in RTMP protocol — avio_open2 handles it
+    int ret = avio_open2(&m_avioCtx, url, AVIO_FLAG_READ, nullptr, &opts);
+    av_dict_free(&opts);
+
+    if (ret < 0) {
+        m_avioCtx = nullptr;
+        return ret;
+    }
+    return 0;
 }
 
 int RtmpProtocol::read(uint8_t* buf, int size) {
@@ -65,13 +82,9 @@ int64_t RtmpProtocol::seek(int64_t pos, int whence) {
 }
 
 int RtmpProtocol::close() {
-    // TODO: close RTMP stream and cleanup
     if (m_avioCtx) {
-        avio_close(m_avioCtx);
+        avio_close(m_avioCtx); // also frees internal buffer
         m_avioCtx = nullptr;
-    }
-    if (m_avioBuffer) {
-        av_freep(&m_avioBuffer);
     }
     m_url.clear();
     return 0;
