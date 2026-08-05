@@ -1,5 +1,10 @@
 # RTMP 协议深度解析与面试指南：从会用推流到能说“精通 RTMP”
 
+## 0. 本篇定位
+
+- 面试复习：先掌握 RTMP 握手、Chunk Header、Message 类型、控制消息、AMF 命令和 H.264/AAC 封装。
+- 深入学习：重点看服务端 parser、GOP cache、慢客户端背压、首帧黑屏、有声无画、timestamp 和抓包排障。
+- 职责边界：这篇偏协议字段和服务端工程；直播业务口述回到 [../直播/RTMP直播协议深入理解与面试指南.md](../直播/RTMP直播协议深入理解与面试指南.md)。
 RTMP（Real-Time Messaging Protocol）是传统直播推流链路中最常见的协议之一。很多音视频工程师平时只是用 FFmpeg、OBS、SRS、Nginx-RTMP 或公司 SDK 推一个 `rtmp://` 地址，但面试里如果你说“熟悉 RTMP”甚至“精通 RTMP”，面试官通常会继续追问：**握手怎么做、chunk 怎么拆、message 怎么封、H.264/AAC 怎么放进去、时间戳怎么处理、服务端怎么抗慢客户端、RTMP 为什么延迟高、如何排查推流失败**。
 
 本文目标是把 RTMP 从“会用”补到“能面试、能排障、能写基础实现”的程度。

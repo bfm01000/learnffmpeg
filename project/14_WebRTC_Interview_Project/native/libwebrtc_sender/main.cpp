@@ -52,12 +52,13 @@ Options ParseArgs(int argc, char** argv) {
     else if (!(value = read_value("--port")).empty()) options.port = ParsePositiveInt(value, "--port");
     else if (!(value = read_value("--room")).empty()) options.room = value;
     else if (!(value = read_value("--source")).empty()) options.video.source = value;
+    else if (!(value = read_value("--file")).empty()) options.video.file = value;
     else if (!(value = read_value("--width")).empty()) options.video.width = ParsePositiveInt(value, "--width");
     else if (!(value = read_value("--height")).empty()) options.video.height = ParsePositiveInt(value, "--height");
     else if (!(value = read_value("--fps")).empty()) options.video.fps = ParsePositiveInt(value, "--fps");
     else if (arg == "--help" || arg == "-h") {
       std::cout << "Usage: low_latency_sender [--host 127.0.0.1] [--port 3000] [--room lab] "
-                << "[--source synthetic] [--width 640] [--height 480] [--fps 30]\n";
+                << "[--source synthetic|i420] [--file input.i420] [--width 640] [--height 480] [--fps 30]\n";
       std::exit(0);
     } else {
       std::cerr << "Unknown argument: " << arg << "\n";

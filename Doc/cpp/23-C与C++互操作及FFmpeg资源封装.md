@@ -1,12 +1,17 @@
 # C 与 C++ 互操作及 FFmpeg/SDL 资源封装
 
+## 0. 本篇定位
+
+- 面试复习：先掌握 `extern "C"`、ABI、`void* userData` 回调跳板、FFmpeg/SDL 资源 RAII 和错误码处理。
+- 深入学习：重点看 C API 与 C++ 对象生命周期、异常边界、所有权转移和自定义 IO 回调。
+- 音视频落点：这是 FFmpeg 工程化最关键的 C++ 文档之一，回答“你怎么把 C 库写成可靠 C++ 模块”时优先引用它。
 > 高级音视频岗实战核心。FFmpeg、SDL、系统调用全是 **C 接口**，C++ 代码要天天和它们打交道。本篇考察的不是「会不会调」，而是**跨语言边界的正确姿势**：符号修饰、ABI 兼容、回调穿越、资源所有权、错误码到异常的转换。
 >
-> 前置：用 `unique_ptr` + 自定义 deleter 包 FFmpeg 资源见 [[06-智能指针与资源管理]]（本篇不重复，只深化）；符号与链接见 [[18-编译链接与构建]]；异常边界见 [[16-异常与异常安全]]；移动语义见 [[07-移动语义与右值引用]]、[[15-拷贝消除与三五零法则]]。
+> 前置：用 `unique_ptr` + 自定义 deleter 包 FFmpeg 资源见 [06-智能指针与资源管理](06-智能指针与资源管理.md)（本篇不重复，只深化）；符号与链接见 [18-编译链接与构建](18-编译链接与构建.md)；异常边界见 [16-异常与异常安全](16-异常与异常安全.md)；移动语义见 [07-移动语义与右值引用](07-移动语义与右值引用.md)、[15-拷贝消除与三五零法则](15-拷贝消除与三五零法则.md)。
 
 ---
 
-## 📌 面试速记（考前 5 分钟扫一遍）
+## 面试速记（考前 5 分钟扫一遍）
 
 - **`extern "C"` 的本质**：关闭 **name mangling（名字修饰）**，让 C++ 编译器按 C 的规则生成符号名，这样才能和 C 库的 `.o`/`.a`/`.so` 正确链接。
 - **为什么 C 库头要包在 `extern "C" { ... }` 里**：C 库头若没自带 `#ifdef __cplusplus` 守卫，C++ 这边声明的函数符号会被修饰，链接时找不到 C 库里未修饰的符号 → **undefined reference**。
@@ -52,7 +57,7 @@ decode
 extern "C" int decode(int frameCount); // 符号就是 "decode"，不再是 "_Z6decodei"
 ```
 
-调用任何 C 库（FFmpeg、SDL、libcurl、系统库）时，C++ 代码必须用 `extern "C"` 声明那些函数，否则编译器按 C++ 规则去找 `_Z...` 符号，而 C 库的 `.so`/`.a` 里只有未修饰的符号——链接期报 **undefined reference**（这一步发生在链接而非编译，详见 [[18-编译链接与构建]]）。
+调用任何 C 库（FFmpeg、SDL、libcurl、系统库）时，C++ 代码必须用 `extern "C"` 声明那些函数，否则编译器按 C++ 规则去找 `_Z...` 符号，而 C 库的 `.so`/`.a` 里只有未修饰的符号——链接期报 **undefined reference**（这一步发生在链接而非编译，详见 [18-编译链接与构建](18-编译链接与构建.md)）。
 
 ```text
 # 典型报错：声明被 mangling，链到 C 库时找不到修饰后的符号
@@ -81,7 +86,7 @@ void mylib_close(int handle);
 
 ### 4. 什么时候要自己手动包 `extern "C"`
 
-只有当某个老旧 C 库头**没写守卫**时，才需要在 C++ 这边手动包裹（[[06-智能指针与资源管理]] 里包 FFmpeg 头就是演示这种写法，实际新版 FFmpeg 头已自带守卫）：
+只有当某个老旧 C 库头**没写守卫**时，才需要在 C++ 这边手动包裹（[06-智能指针与资源管理](06-智能指针与资源管理.md) 里包 FFmpeg 头就是演示这种写法，实际新版 FFmpeg 头已自带守卫）：
 
 ```cpp
 extern "C" {
@@ -199,7 +204,7 @@ spec.callback = [volume](unsigned char* s, int l){}; // 带捕获，无法转函
 
 ### 2. 正确模式：静态跳板 + `void* userData` 传 `this`
 
-唯一可移植的姿势：用**静态成员函数 / 无捕获 lambda** 作为「跳板（trampoline）」满足函数指针类型，把 `this` 通过 C API 预留的 `void* userData` 透传进去，回调里 `static_cast` 还原（`void*` 到具体类型的转换见 [[11-类型转换]]）。
+唯一可移植的姿势：用**静态成员函数 / 无捕获 lambda** 作为「跳板（trampoline）」满足函数指针类型，把 `this` 通过 C API 预留的 `void* userData` 透传进去，回调里 `static_cast` 还原（`void*` 到具体类型的转换见 [11-类型转换](11-类型转换.md)）。
 
 ### 3. 示例 A：FFmpeg `av_log_set_callback`（日志回调）
 
@@ -330,7 +335,7 @@ private:
 
 ### 6. 回调里抛异常穿过 C 栈帧 = 未定义行为
 
-这是边界处最致命的坑。FFmpeg/SDL 是 C 编译的，调用栈里**没有异常处理的栈展开信息**。如果你的回调（运行在 C 调用的栈帧上）抛出 C++ 异常，异常要往上传播、却要穿过 C 的栈帧——这是**未定义行为**，轻则 `std::terminate`，重则栈损坏崩溃（异常安全与栈展开见 [[16-异常与异常安全]]）。
+这是边界处最致命的坑。FFmpeg/SDL 是 C 编译的，调用栈里**没有异常处理的栈展开信息**。如果你的回调（运行在 C 调用的栈帧上）抛出 C++ 异常，异常要往上传播、却要穿过 C 的栈帧——这是**未定义行为**，轻则 `std::terminate`，重则栈损坏崩溃（异常安全与栈展开见 [16-异常与异常安全](16-异常与异常安全.md)）。
 
 **铁律：C 边界（回调入口、`extern "C"` 入口）必须吞掉所有异常，转成错误码。**
 
@@ -353,7 +358,7 @@ static int readPacket(void* opaque, uint8_t* buf, int bufSize) {
 
 ### 1. 基线：`unique_ptr` + 自定义 deleter（独占）
 
-最常用的写法——给 `unique_ptr` 配一个调用 `av_*_free` 的 deleter，独占管理一个 `AVFrame`/`AVPacket`。**这部分 [[06-智能指针与资源管理]] 已详讲**（含二级指针、`get/release/reset` 在 C API 的用法），这里一句话带过：
+最常用的写法——给 `unique_ptr` 配一个调用 `av_*_free` 的 deleter，独占管理一个 `AVFrame`/`AVPacket`。**这部分 [06-智能指针与资源管理](06-智能指针与资源管理.md) 已详讲**（含二级指针、`get/release/reset` 在 C API 的用法），这里一句话带过：
 
 ```cpp
 struct AVFrameDeleter { void operator()(AVFrame* f) const { av_frame_free(&f); } };
@@ -388,7 +393,7 @@ std::shared_ptr<AVFrame> consumerCopy = sharedFrame;  // 计数 +1
 
 ### 3. 封装成 RAII 类（带移动语义 + 引用语义）
 
-更工程化的做法是封装成一个 RAII 类：**构造时 alloc、析构时 free、禁拷贝、实现移动**。AVFrame 本身是「引用计数的帧」——它内部的像素 buffer 由 `av_frame_ref`/`av_frame_unref` 共享。所以拷贝语义要用 `av_frame_ref` 表达「共享底层 buffer」，移动则是「转移所有权」（移动语义见 [[07-移动语义与右值引用]]，禁拷贝/移动的取舍见 [[15-拷贝消除与三五零法则]]）。
+更工程化的做法是封装成一个 RAII 类：**构造时 alloc、析构时 free、禁拷贝、实现移动**。AVFrame 本身是「引用计数的帧」——它内部的像素 buffer 由 `av_frame_ref`/`av_frame_unref` 共享。所以拷贝语义要用 `av_frame_ref` 表达「共享底层 buffer」，移动则是「转移所有权」（移动语义见 [07-移动语义与右值引用](07-移动语义与右值引用.md)，禁拷贝/移动的取舍见 [15-拷贝消除与三五零法则](15-拷贝消除与三五零法则.md)）。
 
 ```cpp
 extern "C" {
@@ -541,7 +546,7 @@ av_strerror(errorCode, errorBuffer, sizeof(errorBuffer));
 
 ### 2. 收发包热路径：保持错误码，别抛异常
 
-逐帧解码是**热路径**，`EAGAIN`/`EOF` 是高频且可预期的正常控制流，绝不该用异常表达（异常 vs 错误码的权衡见 [[16-异常与异常安全]]）：
+逐帧解码是**热路径**，`EAGAIN`/`EOF` 是高频且可预期的正常控制流，绝不该用异常表达（异常 vs 错误码的权衡见 [16-异常与异常安全](16-异常与异常安全.md)）：
 
 ```cpp
 int decodePacket(AVCodecContext* codecContext, AVPacket* packet, FrameSink& sink) {
@@ -593,7 +598,7 @@ if (!result) {
 auto& demuxer = *result;
 ```
 
-**边界策略总结**：热路径（逐帧收发）保留原生错误码，零开销且能精确区分 `EAGAIN`/`EOF`；冷路径（初始化）转成 `expected`/异常，换取调用方代码整洁。这条线和 [[16-异常与异常安全]] 里「异常留给真正异常的路径」是一致的。
+**边界策略总结**：热路径（逐帧收发）保留原生错误码，零开销且能精确区分 `EAGAIN`/`EOF`；冷路径（初始化）转成 `expected`/异常，换取调用方代码整洁。这条线和 [16-异常与异常安全](16-异常与异常安全.md) 里「异常留给真正异常的路径」是一致的。
 
 > 面试标准回答：「FFmpeg 用返回值传错误，负数是错误码，`AVERROR(EAGAIN)` 和 `AVERROR_EOF` 是收发包循环的正常控制信号不是错误。我的策略是分层：解码热路径保留原生错误码，避免每帧抛异常的开销，也方便区分 EAGAIN/EOF；初始化这种冷路径再用 `av_strerror` 转成可读信息，包成 `std::expected` 或异常给上层。」
 
@@ -624,7 +629,7 @@ uint8_t* buf = static_cast<uint8_t*>(av_malloc(1024));
 av_freep(&buf);               // av_freep 释放后顺带把指针置 nullptr
 ```
 
-为什么不能混：`av_malloc` 会做 SIMD 友好的对齐（通常 32/64 字节），可能在返回指针前多分配了对齐填充和元信息，`delete`/`free` 看到的不是它认识的堆块头，于是破坏堆结构（对齐与 SIMD 见 [[21-内存对齐、SIMD与缓冲管理]]）。
+为什么不能混：`av_malloc` 会做 SIMD 友好的对齐（通常 32/64 字节），可能在返回指针前多分配了对齐填充和元信息，`delete`/`free` 看到的不是它认识的堆块头，于是破坏堆结构（对齐与 SIMD 见 [21-内存对齐、SIMD与缓冲管理](21-内存对齐、SIMD与缓冲管理.md)）。
 
 ### 2. 传入参数 vs 传出参数：看清所有权是否转移
 
@@ -655,7 +660,7 @@ av_dict_free(&options);                            // 必须由你释放，否�
 
 - **解封装/解码层**：`AVFormatContext`、`AVCodecContext`、`AVFrame`、`AVPacket` 全用 RAII 类或 `unique_ptr`+deleter 管，禁拷贝、实现移动；逐帧 `send/receive` 用错误码循环处理 `EAGAIN`/`EOF`。
 - **自定义数据源**：从内存/网络/解密流喂数据用 `avio_alloc_context` + `read_packet` 回调，`opaque` 透传 `this`，回调 `try/catch(...)` 兜底，缓冲用 `av_malloc`。
-- **渲染/音频输出层**：SDL 音频回调跑在独立线程，用静态跳板 + `userdata` 拿到播放器对象；回调里只做填数据，绝不抛异常；PCM 队列跨线程要加锁（见 [[01-多线程与锁]]）。
+- **渲染/音频输出层**：SDL 音频回调跑在独立线程，用静态跳板 + `userdata` 拿到播放器对象；回调里只做填数据，绝不抛异常；PCM 队列跨线程要加锁（见 [01-多线程与锁](01-多线程与锁.md)）。
 - **一帧多消费者**：解码出的 `AVFrame` 要同时给渲染和录制时，用 `shared_ptr<AVFrame>`+deleter，或 `av_frame_ref` 共享底层 buffer，避免整帧像素深拷贝。
 - **日志/诊断**：`av_log_set_callback` 接管 FFmpeg 日志转发到自家日志系统，回调用无捕获 lambda/静态函数。
 - **对外 SDK**：若把播放器封成 SDK 给别的语言/模块用，走 pimpl + `extern "C"`，句柄用不透明指针，所有入口 `try/catch(...)` 转错误码。

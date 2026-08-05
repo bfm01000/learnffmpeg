@@ -30,3 +30,19 @@ Do not vendor the full WebRTC source tree into this project directory. Keep it i
 ```text
 /home/bfm01000/workspace/third_party/webrtc-checkout
 ```
+## I420 file source
+
+Generate a reusable I420 segment from the unified FRXXZ sample:
+
+```bash
+cd /home/bfm01000/workspace/learnffmpeg/project/14_WebRTC_Interview_Project
+scripts/prepare_frxxz_i420.sh 200 320 180
+```
+
+Run native sender with real decoded frames:
+
+```bash
+scripts/run_native_i420_sender.sh lab 320 180 25 200
+```
+
+Open `http://localhost:3000`, keep room `lab`, then click Join.

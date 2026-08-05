@@ -1,5 +1,16 @@
 # 12 - RTMP 推流详解
 
+## 0. 本篇定位
+
+| 项 | 说明 |
+|---|---|
+| 面试位置 | RTMP 推流专题：握手、控制命令、chunk、FLV Tag 和推流排查。 |
+| 先背什么 | connect/createStream/publish、RTMP 与 FLV 的关系、黑屏花屏卡顿排查要熟。 |
+| 深入怎么学 | 结合 FFmpeg C API 推流、时间戳、SPS/PPS、音视频交织理解。 |
+| 关联阅读 | 05、08、19 |
+
+---
+
 > 对应导读第 3.7 节"运输问题"。这是 [08-网络协议与流媒体.md](./08-网络协议与流媒体.md) §六协议全景里 **RTMP 那一格的深挖**——专讲"主播端怎么把音视频推到服务器"。
 > 前置：编码看 [11-H264与H265详解.md](./11-H264与H265详解.md) / [06-编码参数与码控.md](./06-编码参数与码控.md)，FLV 封装看 [05-H264-MP4-NALU.md](./05-H264-MP4-NALU.md) §5.5，协议大局看 [08](./08-网络协议与流媒体.md) §六。
 
@@ -1024,3 +1035,31 @@ tshark -r rtmp.pcap -Y 'rtmp' -T fields \
 - **推流软件**：OBS Studio（最广）、FFmpeg、各厂手机直播 SDK。
 - **流媒体服务器**：SRS（国产、流行）、nginx-rtmp-module、Wowza、各云厂商直播服务。
 - **趋势**：推流仍以 RTMP 为主；低延迟/弱网场景 SRT 和 WebRTC 在抬头。分发端 RTMP 早已退给 HTTP-FLV / HLS / WebRTC。
+---
+
+## 十四、MediaCodec 编码推 RTMP：SPS/PPS 发送时序
+
+Android 用 `MediaCodec` 做 H.264 硬编码再推 RTMP 时，最容易漏的是 sequence header。RTMP/FLV 播放端必须先拿到 AVCDecoderConfigurationRecord，也就是通常说的 avcC，里面包含 SPS/PPS。
+
+典型时序：
+
+```text
+MediaCodec.configure(encoder)
+  -> start
+  -> dequeueOutputBuffer 返回 INFO_OUTPUT_FORMAT_CHANGED
+  -> 从 outputFormat 读取 csd-0(SPS)、csd-1(PPS)
+  -> 组装 FLV AVC sequence header
+  -> 发送 RTMP metadata / video sequence header
+  -> 后续普通视频帧按 FLV Video Tag 发送
+```
+
+Android 侧注意点：
+
+| 点 | 说明 |
+|---|---|
+| `csd-0` / `csd-1` | 通常分别是 SPS/PPS，可能带 Annex-B start code，组 avcC 前要处理 |
+| sequence header | 必须在普通视频帧前发送，否则播放器可能黑屏等待参数集 |
+| IDR 前补 SPS/PPS | 弱网、断线重连、新观众切入时更稳，但要注意封装格式要求 |
+| Annex-B vs AVCC | `MediaCodec` 输出和 RTMP/FLV 需要的格式不一定一致，发送前要转换 |
+
+面试可以这样收口：MediaCodec 负责产出编码帧，但 RTMP/FLV 需要的是“可被播放器初始化的封装流”。所以除了编码本身，还要处理 SPS/PPS、avcC、Video Tag 类型、时间戳和关键帧标记。

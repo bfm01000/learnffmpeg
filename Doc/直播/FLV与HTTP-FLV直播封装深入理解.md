@@ -1,5 +1,10 @@
 # FLV 与 HTTP-FLV 直播封装深入理解
 
+## 0. 本篇定位
+
+- 面试复习：先掌握 FLV 是封装格式、HTTP-FLV 是通过 HTTP 长连接持续发送 FLV Tag，以及为什么它适合低延迟播放。
+- 深入学习：重点看 FLV Header/Tag、AVC/AAC sequence header、CompositionTime、timestamp 和 RTMP 转 HTTP-FLV 的关系。
+- 职责边界：这篇主讲直播封装语义；编码格式细节回到 [../ffmpeg/05-H264-MP4-NALU.md](../ffmpeg/05-H264-MP4-NALU.md) 和 [../ffmpeg/18-FFmpeg音频编解码详解.md](../ffmpeg/18-FFmpeg音频编解码详解.md)。
 如果你学 RTMP 时卡在 FLV，通常不是因为 FLV 本身复杂，而是因为几个概念混在一起了：
 
 - `H.264/AAC`：编码格式，描述压缩后的音视频数据。

@@ -1,5 +1,10 @@
 # Camera2 视频采集详解：面试速记与原理详解
 
+## 0. 本篇定位
+
+- 面试复习：优先掌握 `CameraManager -> CameraDevice -> CameraCaptureSession -> Surface/ImageReader` 的创建顺序，以及 `ImageReader` 通路和 `SurfaceTexture` 通路的取舍。
+- 深入学习：重点理解 `YUV_420_888` 的 `rowStride`、`pixelStride`、回调线程和背压控制，避免把相机帧当成连续 `I420` 内存处理。
+- 工程落点：采集模块要服务后续编码、预览、滤镜和算法，真正难点是分辨率、方向、帧率、线程和内存通路的稳定组合。
 > **适用方向**：Android 移动端音视频 SDK 开发，拍摄/直播采集方向
 > **前置知识**：Android 开发基础（Activity/Handler/TextureView），了解 YUV 颜色空间
 > **难度**：⭐⭐⭐（1-5 星）
@@ -453,12 +458,10 @@ Camera2 在竖屏设备上，传感器的物理方向是横屏。使用 SurfaceV
 
 ---
 
-## 🎯 一句话总结
-
+## 一句话总结
 > Camera2 采集 YUV = ImageReader(YUV_420_888) + 动态判断 planes 数量判断 I420/NV12/NV21 + rowStride/pixelStride 逐 plane 正确拷贝 + 用完后 close()。Surface 通路零拷贝给编码器更优。
 
-## 🔗 关联文档
-
+## 关联文档
 - [[00-Android音视频开发全景导读]] — Android 媒体栈全景图
 - [[02-MediaCodec硬编码实战]] — 采集输出喂给编码器
 - [[04-OpenGLES渲染与Surface详解]] — SurfaceTexture 零拷贝渲染

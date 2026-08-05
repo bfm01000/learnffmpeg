@@ -1,5 +1,10 @@
 # VideoToolbox 硬编码实战：从 CVPixelBuffer 到 H.264 比特流
 
+## 0. 本篇定位
+
+- 面试复习：先掌握 `VTCompressionSession` 生命周期、实时编码参数、B 帧关闭、SPS/PPS 获取、动态码率和强制 IDR。
+- 深入学习：重点看回调异步模型、`CVPixelBufferPool`、DataRateLimits、HEVC 差异和后台恢复。
+- 工程落点：实时编码要围绕低延迟、稳定码率、关键帧策略和输出格式转换设计，而不只是调用一次 EncodeFrame。
 > **适用方向**：iOS 移动端音视频 SDK 开发，实时推流/RTC/录制方向
 > **前置知识**：CVPixelBuffer / CMTime 基础，了解 H.264 编码基本概念（GOP/码率/Profile）
 > **难度**：⭐⭐⭐（1-5 星）
@@ -840,12 +845,10 @@ App 进后台后，VTCompressionSession 可能被系统暂停或失效。回到�
 
 ---
 
-## 🎯 一句话总结
-
+## 一句话总结
 > VideoToolbox 编码 = 创建 VTCompressionSession + 配好 RealTime + 关 B 帧 + 异步回调里取数据。关键帧前自己补 SPS/PPS、实时改码率用 VTSessionSetProperty、强制 IDR 在 EncodeFrame 时传 ForceKeyFrame、结束前调 CompleteFrames flush。
 
-## 🔗 关联文档
-
+## 关联文档
 - [[../ffmpeg/15-iOS硬件编解码]] — VT 编解码的全文深讲
 - [[01-AVFoundation采集详解]] — 编码输入 CVPixelBuffer 的来源
 - [[04-Metal渲染与零拷贝详解]] — 编码前的 Metal 预处理（美颜/滤镜）

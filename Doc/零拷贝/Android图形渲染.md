@@ -1,5 +1,10 @@
 # Android 图形渲染与 BMGMedia SDK 架构复习指南
 
+## 0. 本篇定位
+
+- 面试复习：先掌握 `Surface`、`SurfaceTexture`、`BufferQueue`、`GraphicBuffer`、`OES Texture`、`FBO` 的真实关系。
+- 深入学习：重点看预览、美颜、编码、上屏同时存在时的分流模型，以及哪些步骤会引入同步或拷贝。
+- 工程落点：这篇适合回答 Android 4K 预览/直播性能优化问题，平台 API 细节回链到 Android 目录。
 本文档总结了 Android 图形系统（Surface、Texture、BufferQueue）的核心概念，以及 BMGMedia SDK 中 `CameraRenderSurface`、`CameraLiveRender` 和 `NativeGLFilterAdapter` 的架构设计与使用场景。
 
 ---

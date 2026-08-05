@@ -1,4 +1,15 @@
-# FFmpeg Seek 详解：从拖动进度条到帧精确定位
+# 17 - FFmpeg Seek 详解：从拖动进度条到帧精确定位
+
+## 0. 本篇定位
+
+| 项 | 说明 |
+|---|---|
+| 面试位置 | Seek 专题：关键帧定位、精准 seek、flush、队列重建和同步恢复。 |
+| 先背什么 | 为什么 seek 不能随便跳到任意帧、seek 后为什么要 flush、如何做精准 seek。 |
+| 深入怎么学 | 从容器索引、关键帧、解码依赖、PTS 重建和播放器状态机理解。 |
+| 关联阅读 | 01、05、22、24 |
+
+---
 
 ## 一、全景导读：Seek 在技术版图里的位置
 
@@ -962,3 +973,5 @@ static SeekDecision MakeSeekDecision(const std::vector<KeyframeEntry>& keyframes
 - [[01-数据结构与生命周期]] — `AVIndexEntry`、`AVStream` 等核心数据结构的深入讲解
 - [[05-H264-MP4-NALU]] — MP4 容器结构，stss Box 与关键帧索引的对应关系
 - [[06-编码参数与码控]] — GOP 大小、I 帧间隔对 Seek 性能的影响
+
+

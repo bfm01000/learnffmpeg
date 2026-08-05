@@ -1,5 +1,16 @@
 # 18 - FFmpeg 音频编解码详解（AAC / Opus / MP3）
 
+## 0. 本篇定位
+
+| 项 | 说明 |
+|---|---|
+| 面试位置 | 音频编码专题：AAC/Opus/MP3、frame_size、extradata、PTS 和编码 API。 |
+| 先背什么 | AAC/Opus 怎么选、nb_samples 怎么填、ADTS/extradata 是什么要能讲。 |
+| 深入怎么学 | 结合 04 的 PCM 地基和 24 的同步策略看。 |
+| 关联阅读 | 04、24、音频专项 |
+
+---
+
 > **适用方向**：音视频开发、直播推流、播放器开发、WebRTC——任何需要用 FFmpeg 做音频编解码的岗位。
 > **难度分层**：中级（必须掌握）/ 高级（进阶加分）分界线见 §1.6
 > **预计阅读**：速记 15 分钟｜全文 50 分钟
@@ -1016,3 +1027,5 @@ sample_count += frame->nb_samples;
 - [[05-H264-MP4-NALU.md]] — 视频编解码对照阅读（Annex-B vs AVCC = ADTS vs raw AAC）
 - [[08-网络协议与流媒体.md]] — RTMP/FLV 里音频的封装位置（AAC sequence header 在哪）
 - [[11-H264与H265详解.md]] — 音频版 SPS/PPS = AudioSpecificConfig = extradata 的对照理解
+
+

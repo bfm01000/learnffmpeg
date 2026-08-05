@@ -1,5 +1,10 @@
 # MediaCodec 硬解码实战：从 H.264 比特流到渲染
 
+## 0. 本篇定位
+
+- 面试复习：先掌握 `csd-0/csd-1`、Annex-B/AVCC 输入、EOS、`releaseOutputBuffer(render=true)` 与 Surface 输出的关键语义。
+- 深入学习：重点看硬解输出帧槽位、Surface 模式与 ByteBuffer 模式、FFmpeg `AVFrame` 硬件帧引用之间的对应关系。
+- 工程落点：播放器和预览优先让解码器直接输出到 Surface；只有截图、AI 算法或软件滤镜必须读像素时才考虑回到 CPU。
 > **适用方向**：Android 播放器 / RTC 拉流 / 本地视频解码
 > **前置知识**：MediaCodec 基础、H.264 NALU / Annex-B 格式
 > **难度**：⭐⭐⭐（1-5 星）
@@ -404,12 +409,10 @@ Android `MediaCodec` 的原始设计哲学是**「解码器直接把数据推到
 
 ---
 
-## 🎯 一句话总结
-
+## 一句话总结
 > Android 解码 = csd-0/csd-1 传 SPS/PPS → Annex-B 喂入 → Surface 零拷贝输出最省心（无颜色格式/stride 坑）。ByteBuffer 输出必须用 Image API + rowStride/pixelStride 逐 plane 正确拷贝。
 
-## 🔗 关联文档
-
+## 关联文档
 - [[../ffmpeg/14-Android硬件编解码]] — MediaCodec 全文深讲（颜色格式 § 详细展开）
 - [[04-OpenGLES渲染与Surface详解]] — SurfaceTexture + OpenGL ES 渲染
 - [[06-端到端采集编码推流管线]] — 拉流解码完整管线

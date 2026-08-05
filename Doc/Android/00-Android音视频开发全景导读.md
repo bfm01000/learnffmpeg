@@ -1,5 +1,10 @@
 # Android 音视频开发全景导读
 
+## 0. 本篇定位
+
+- 面试复习：先记住 Android 媒体栈的三层分工、`Surface`/`BufferQueue`/`MediaCodec` 的关系，以及 Android 相比 iOS 的碎片化和状态机复杂度。
+- 深入学习：重点看采集、编码、渲染、音频、推流如何拼成实时链路，并把每个模块回链到后续专题文档。
+- 中高级加分点：不要只说“会用 API”，要能解释为什么 Android 高性能视频链路通常围绕 `Surface`、`GraphicBuffer` 和 GPU/硬件编码器组织。
 > **适用方向**：Android 移动端音视频 SDK 开发（采集→编码→推流 / 拉流→解码→渲染 全链路）
 > **前置知识**：有 C/C++ 基础，了解音视频基本概念（编码/解码/渲染）
 > **难度分层**：中级（必须掌握）标 🟢 / 高级（进阶加分）标 🟡 / 专家深水区标 🔵
@@ -153,12 +158,10 @@ Android 音视频开发
 
 ---
 
-## 🎯 一句话总结
-
+## 一句话总结
 > Android 音视频开发就是用 Camera2 采、MediaCodec 编解码、OpenGL ES 渲染、Surface/SurfaceTexture 做零拷贝——碎片化是最大挑战，颜色格式+stride 是最常见的坑，Surface 零拷贝通路是避开这些坑的最佳方案。
 
-## 🔗 关联文档
-
+## 关联文档
 ### Android 核心文档（本系列）
 - [[01-Camera2采集详解]] — Camera2 从配置到回调的完整指南
 - [[02-MediaCodec硬编码实战]] — MediaCodec 编码完整 Demo

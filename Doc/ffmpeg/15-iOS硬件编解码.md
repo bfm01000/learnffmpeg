@@ -1,5 +1,16 @@
 # 15 - iOS / macOS 硬件编解码深入（VideoToolbox 专题）
 
+## 0. 本篇定位
+
+| 项 | 说明 |
+|---|---|
+| 面试位置 | Apple 硬件编解码专题：VideoToolbox、CVPixelBuffer、AVCC/Annex-B、Metal。 |
+| 先背什么 | VTCompression/VTDecompression、CVPixelBuffer、实时编码属性、SPS/PPS 提取是重点。 |
+| 深入怎么学 | 把 CoreMedia、CoreVideo、IOSurface、Metal 和推流码流格式连起来。 |
+| 关联阅读 | 10、25 |
+
+---
+
 > 这一篇是 [07-硬件编解码.md](./07-硬件编解码.md)、[10-移动端硬件编解码.md](./10-移动端硬件编解码.md) 的 **Apple 专题深入篇**。07 讲硬件帧通用底座（§4 硬件帧、§5.5 桌面零拷贝 interop 总表）；10 把 Android + iOS 合在一篇、iOS 部分（§四 VideoToolbox 实时编码、§四点五零拷贝）已经把"实时编码低延迟旋钮""AVCC↔Annex-B""零拷贝底层原理"开了个头。本篇**不重抄**这些，而是把 iOS/macOS 这一家**单独拎出来系统讲透**：VideoToolbox 在 Apple 媒体栈里站在哪一层、编解码两条完整生命周期、属性旋钮怎么对照 [06](./06-编码参数与码控.md)、比特流转换的字节级细节、零拷贝的 VT 侧提炼，以及面试高频问答。
 > **前置阅读**：先读 [10 §四 / §四点五](./10-移动端硬件编解码.md)（建立 iOS 实时编码 + 零拷贝的初步框架）、[07 §四 硬件帧](./07-硬件编解码.md)、[05 §四 AVCC vs Annex-B + §六 SPS/PPS 补齐](./05-H264-MP4-NALU.md)。本篇大量交叉引用它们，**零拷贝底层（IOSurface / 缓存一致性 / fence / detile）在 [10 §4.5](./10-移动端硬件编解码.md) 已讲透，本篇只做 iOS 视角提炼并 link 过去，不重写**。
 > **目标**：读完能应对面试里关于 iOS / Apple 硬编硬解的绝大部分问题。
@@ -582,3 +593,5 @@ libwebrtc 的 iOS 视频底座就是 VideoToolbox——本篇每一节都能在 
 14. App 切后台回前台后编码花屏/崩，根因和对策是什么？
 
 > 一句话收尾：**VideoToolbox 是 Apple 媒体栈里"想自己控比特流/低延迟"的那一层；它吐 AVCC、参数集分离存 format description，所以推流必做 AVCC→Annex-B + 补 SPS/PPS；实时编码靠 RealTime + 关 B 帧 + 动态码率/强制关键帧这几个有限旋钮；零拷贝靠 CVPixelBuffer(IOSurface)→Metal、别锁基址。iOS 因芯片统一 + FFmpeg 双向支持，是硬编解最省心的平台。**
+
+

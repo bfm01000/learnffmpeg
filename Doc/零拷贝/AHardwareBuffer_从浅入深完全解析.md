@@ -1,5 +1,10 @@
 # AHardwareBuffer 从浅入深完全解析：Android 零拷贝与图形底层的“终极密码”
 
+## 0. 本篇定位
+
+- 面试复习：先掌握 `AHardwareBuffer` 是 Android NDK 层可跨 CPU/GPU/MediaCodec/Camera 共享的硬件缓冲抽象，背后通常关联 gralloc 和 DMA-BUF。
+- 深入学习：重点看 usage flags、格式/尺寸/usage 协商、CPU lock 的代价，以及与 `GraphicBuffer`、`EGLImage` 的关系。
+- 工程落点：这篇作为 Android 零拷贝底座文档，平台实战细节回到 `Doc/Android/02/03/04/07`。
 在 Android 的音视频开发、图形渲染（OpenGL/Vulkan）以及高性能跨进程通信领域，**`AHardwareBuffer`** 绝对是一个出现频率极高，但又让无数中高级开发者感到头疼的“神仙级”对象。
 
 本文将剥丝抽茧，从最直白的生活比喻开始，一路深挖到 Linux 内核的 DMA-BUF，带你彻底看透这个 Android 图形栈的核心枢纽。

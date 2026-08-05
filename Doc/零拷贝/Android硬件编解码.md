@@ -1,5 +1,10 @@
 # 硬件解码与 AVFrame 理解指南
 
+## 0. 本篇定位
+
+- 面试复习：先掌握软解 `AVFrame` 装像素、硬解 `AVFrame` 装硬件资源引用这条分界线。
+- 深入学习：重点看 Android、Apple、D3D11、CUDA、QSV 等硬件帧形态，以及什么时候留在 GPU、什么时候下载回 CPU。
+- 合并边界：本篇作为跨平台硬件帧认知补充；Android 实操看 `../Android/03-MediaCodec硬解码实战.md`，FFmpeg 总结看 `../ffmpeg/25-硬解码到渲染流程-MediaCodec-VideoToolbox.md`。
 这是一份**纯原理版**说明文档，不依赖任何具体项目实现。  
 目标是帮助已经理解**软件解码**的同学，建立对**硬件解码**和 **AVFrame** 的正确认知。
 

@@ -1,5 +1,10 @@
 # Android OES 纹理深入详解（面试向）
 
+## 0. 本篇定位
+
+- 面试复习：先能回答 OES 纹理是什么、和 `GL_TEXTURE_2D` 有什么区别、`updateTexImage()`/`getTransformMatrix()` 分别做什么。
+- 深入学习：重点看 `GL_OES_EGL_image_external`、`GraphicBuffer -> EGLImage -> external texture` 的映射链，以及 OES 到 2D/FBO 的转换边界。
+- 工程落点：OES 是 Android 视频帧进入 GL 世界的入口，不是通用工作纹理；复杂滤镜和多路输出通常需要转成 2D texture 再处理。
 > 适用方向：Android 音视频 SDK 开发、OpenGL ES 渲染、Camera/MediaCodec 管线
 > 前置：OpenGL ES 基础（纹理、shader、sampler）、Android Surface/SurfaceTexture 概念
 > 难度：⭐⭐⭐⭐⭐

@@ -1,5 +1,10 @@
 # GPUImage 滤镜链详解：面试速记与原理详解
 
+## 0. 本篇定位
+
+- 面试复习：先掌握 GPUImage 的滤镜链模型、target/source 连接方式、FBO/纹理复用，以及它和 Core Image、自研 Metal 的取舍。
+- 深入学习：重点看多滤镜串联时的纹理传递、上下文管理和性能边界。
+- 工程落点：面试中不要只说“用了 GPUImage”，要能讲出滤镜链如何减少 CPU 参与，以及为什么新项目更倾向 Metal。
 > **适用方向**：iOS 移动端图像/视频特效处理、美颜 SDK、滤镜引擎
 > **前置知识**：OpenGL ES 基础（纹理、FBO、shader），了解 CVPixelBuffer 基本概念
 > **难度**：⭐⭐（1-5 星）
@@ -217,12 +222,10 @@ GPUImage 1.x 基于 OpenGL ES，在 iOS 12+ 上被标记为 deprecated（但还�
 
 ---
 
-## 🎯 一句话总结
-
+## 一句话总结
 > GPUImage 的核心价值不是某个具体的滤镜实现，而是 FBO 串联纹理传递的滤镜链设计模式——理解了这个，你在任何 GPU API（GL/Metal/Vulkan）上都能搭出一套滤镜管线。
 
-## 🔗 关联文档
-
+## 关联文档
 - [[00-iOS音视频开发全景导读]] — iOS 媒体栈全景
 - [[01-AVFoundation采集详解]] — 拿到 CVPixelBuffer 之后怎么喂给滤镜
 - [[../ffmpeg/00-FFmpeg全景导读]] §3.6 — 加工问题（libavfilter 滤镜图的通用思想，和 GPUImage 滤镜链的架构思路一致）

@@ -1,5 +1,10 @@
 # AudioTrack 与 AudioRecord 详解：Android 音频采集与播放
 
+## 0. 本篇定位
+
+- 面试复习：先掌握 `AudioRecord`/`AudioTrack` 的缓冲区、回调线程、采样率/声道/采样格式，以及低延迟场景为什么要关注 AAudio/OpenSL ES。
+- 深入学习：重点看音频焦点、路由、蓝牙延迟、AEC/NS/AGC 和 underrun/overrun 排查。
+- 工程落点：音频模块真正考验的是实时线程纪律、时钟稳定性和与视频时间戳的同步，而不是单纯会打开麦克风。
 > **适用方向**：Android 实时音频（直播/RTC/VoIP）
 > **难度**：⭐⭐⭐（1-5 星）
 > **预计阅读**：速记 8 分钟｜全文 25 分钟
@@ -237,11 +242,9 @@ AudioRecord.read() 和 AudioTrack.write() 都会阻塞。如果在同一线程�
 
 ---
 
-## 🎯 一句话总结
-
+## 一句话总结
 > Android 音频 = AudioRecord(AudioSource.VOICE_COMMUNICATION, 48kHz, 16bit, mono) 采 PCM → AudioTrack 播 PCM。低延迟场景用 AAudio(API 26+) 或 PERFORMANCE_MODE_LOW_LATENCY。音频线程不能阻塞，用无锁队列解耦。记得处理 AudioFocus 和蓝牙延迟。
 
-## 🔗 关联文档
-
+## 关联文档
 - [[06-端到端采集编码推流管线]] — 音频在推流管线中的位置
 - [[../ffmpeg/18-FFmpeg音频编解码详解]] — PCM → AAC 编码

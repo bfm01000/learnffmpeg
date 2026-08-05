@@ -1,5 +1,10 @@
 # AudioSession 与 iOS 音频策略详解：中断、路由、后台
 
+## 0. 本篇定位
+
+- 面试复习：先掌握 category、mode、option、路由变化、中断恢复、后台音频和蓝牙策略。
+- 深入学习：重点看 `AVAudioSession` 与 AudioUnit/AVAudioEngine/WebRTC 音频模块之间的职责边界。
+- 工程落点：音频策略配置错误会表现为无声、延迟异常、AEC 失效或后台中断恢复失败，是移动端音视频高频故障源。
 > **适用方向**：iOS 音视频 SDK 开发，直播/RTC/播放器方向
 > **前置知识**：AudioUnit 基础（RemoteIO），了解 AVAudioSession 的基本概念
 > **难度**：⭐⭐⭐（1-5 星）
@@ -623,12 +628,10 @@ sessionMgr.delegate = self;
 
 ---
 
-## 🎯 一句话总结
-
+## 一句话总结
 > AudioSession 是你的 App 和系统音频的"合同"——直播/RTC 标配 PlayAndRecord + VideoChat + DefaultToSpeaker + AllowBluetooth，采样率 48kHz、buffer 5ms。必须处理中断（暂停/恢复 AudioUnit）和路由变化（插拔耳机/蓝牙）。最常见的坑是忘了 DefaultToSpeaker（听筒发声）。
 
-## 🔗 关联文档
-
+## 关联文档
 - [[00-iOS音视频开发全景导读]] — iOS 媒体栈全景
 - [[02-AudioUnit与音频处理详解]] — AudioUnit RemoteIO 采集与播放
 - [[08-端到端采集编码推流管线]] — 音频在推流管线中的位置

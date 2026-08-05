@@ -1,5 +1,16 @@
 # 21 - RTP 详解（面试导向）
 
+## 0. 本篇定位
+
+| 项 | 说明 |
+|---|---|
+| 面试位置 | RTP/RTCP 专题：UDP 之上的媒体时间戳、序列号、抖动和反馈。 |
+| 先背什么 | RTP 包头、timestamp/sequence、marker、RTCP、H.264 分包、WebRTC 关系是重点。 |
+| 深入怎么学 | 把 RTP 看成实时媒体传输的“说明书”，再结合 jitter buffer 和同步。 |
+| 关联阅读 | 08、24 |
+
+---
+
 > RTP（Real-time Transport Protocol）是实时音视频的**媒体承载层**。它不是"又一个流媒体协议"，而是 **RTSP 和 WebRTC 共同依赖的底层传输标准**——摄像头拉流用 RTP、视频会议用 RTP、连直播推流也有 RTP 的变体（SRT 基于 UDP 自封装，WebRTC 直播推流用 RTP）。理解 RTP 是打通 RTSP、WebRTC、SIP/VoIP 三条技术线的钥匙。
 >
 > 前置：协议大局观见 [08-网络协议与流媒体.md](./08-网络协议与流媒体.md) §六，H.264 编码见 [11-H264与H265详解.md](./11-H264与H265详解.md)，RTSP 见 [08](./08-网络协议与流媒体.md) §6.7，WebRTC 见 [08](./08-网络协议与流媒体.md) §十。
@@ -487,3 +498,5 @@ Wireshark 的 RTP 解析器会自动计算：
 ---
 
 > 下一篇建议：RTP 理解到位后，回头重读 [08-网络协议与流媒体.md](./08-网络协议与流媒体.md) §6.7 RTSP 和 §十 WebRTC——RTSP 是"RTSP 控制 + RTP 媒体"，WebRTC 是"ICE+DTLS+SRTP+GCC"。RTP 是这两条技术线共享的"通用语"，掌握了它，RTSP 和 WebRTC 的协议栈就只剩"在外面包了什么"的区别了。
+
+

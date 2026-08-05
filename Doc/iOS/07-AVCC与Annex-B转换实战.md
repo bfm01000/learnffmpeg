@@ -1,5 +1,10 @@
 # AVCC 与 Annex-B 转换实战：iOS 推流必过的格式关
 
+## 0. 本篇定位
+
+- 面试复习：先掌握 AVCC 用长度前缀、Annex-B 用 start code，iOS 编码输出推 RTMP/裸流前通常需要转换。
+- 深入学习：重点看 SPS/PPS/VPS 的提取与注入、关键帧判断、HEVC NALU type 差异和解码输入反向转换。
+- 工程落点：格式转换是推流稳定性的基本功，很多花屏和首帧黑屏都来自参数集发送时机或字节格式混淆。
 > **适用方向**：iOS 实时推流/RTC/WebRTC 开发
 > **前置知识**：H.264 NALU 基础（NALU type / 起始码）、CMSampleBuffer / CMBlockBuffer / CMVideoFormatDescription 的基本操作
 > **难度**：⭐⭐⭐（1-5 星）
@@ -576,12 +581,10 @@ SPS/PPS 应该在**每一个 IDR 前面**注入，而不是只在第一个 IDR �
 
 ---
 
-## 🎯 一句话总结
-
+## 一句话总结
 > AVCC ↔ Annex-B 转换是 iOS 推流/拉流的必经关卡：编码方向把 4 字节长度前缀换起始码 + 从 CMVideoFormatDescription 取 SPS/PPS 注入 IDR 前；解码方向反向操作。HEVC 比 H.264 多一个 VPS 参数集。核心陷阱是 AVCC 长度前缀可能和起始码字节序列相同——必须按长度字段精确跳转，不能扫起始码。
 
-## 🔗 关联文档
-
+## 关联文档
 - [[../ffmpeg/15-iOS硬件编解码]] §六 — AVCC vs Annex-B 字节级深讲
 - [[../ffmpeg/05-H264-MP4-NALU]] — H.264 NALU 基础
 - [[05-VideoToolbox硬编码实战]] — 编码输出 → 转换 → 推流

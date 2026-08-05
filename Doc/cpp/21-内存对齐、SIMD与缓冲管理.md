@@ -1,20 +1,25 @@
 # C++ 内存对齐、SIMD 与缓冲管理
 
+## 0. 本篇定位
+
+- 面试复习：先掌握 cache line、伪共享、对齐分配、SIMD load/store、stride/pitch 和 `span`/view 思想。
+- 深入学习：重点看 CPU 向量化、图像行对齐、音频 ring buffer 和大块内存复用。
+- 音视频落点：像素处理、重采样、滤镜、拷贝和队列传帧都受内存布局影响，是中高级音视频 C++ 的硬核区。
 > 这是音视频高级岗最硬核的「性能深水区」。前几篇讲的是「程序正确」，本篇讲的是「程序为什么快」——为什么解码出来的帧要按 32 字节对齐、为什么多线程计数器会莫名其妙慢 10 倍、为什么裸流 `reinterpret_cast` 会段错误。这些都是底层缓冲管理与 SIMD 的必修课。
 >
-> 前置：对齐基础（`alignas`/`alignof`、结构体 padding、placement new、内存池）见 [[05-内存管理与对象生命周期]]；多线程可见性与内存序见 [[02-原子操作与内存序]]；伪共享在无锁队列里的体现见 [[03-无锁队列]]；裸流类型转换见 [[11-类型转换]]；引用计数缓冲见 [[06-智能指针与资源管理]]。
+> 前置：对齐基础（`alignas`/`alignof`、结构体 padding、placement new、内存池）见 [05-内存管理与对象生命周期](05-内存管理与对象生命周期.md)；多线程可见性与内存序见 [02-原子操作与内存序](02-原子操作与内存序.md)；伪共享在无锁队列里的体现见 [03-无锁队列](03-无锁队列.md)；裸流类型转换见 [11-类型转换](11-类型转换.md)；引用计数缓冲见 [06-智能指针与资源管理](06-智能指针与资源管理.md)。
 
 ---
 
-## 📌 面试速记（考前 10 分钟扫一遍）
+## 面试速记（考前 10 分钟扫一遍）
 
-- **对齐的本质是「让访问落在 CPU 一次能取的边界上」**：标量对齐到自身大小（基础见 [[05-内存管理与对象生命周期]]），而 cache line 是 **64 字节**——CPU 与内存之间永远以整条 cache line 为单位搬运，这是伪共享和缓冲对齐的根源。
+- **对齐的本质是「让访问落在 CPU 一次能取的边界上」**：标量对齐到自身大小（基础见 [05-内存管理与对象生命周期](05-内存管理与对象生命周期.md)），而 cache line 是 **64 字节**——CPU 与内存之间永远以整条 cache line 为单位搬运，这是伪共享和缓冲对齐的根源。
 - **过对齐分配（over-aligned）别用 malloc**：`malloc` 只保证 `max_align_t`（一般 16 字节）。要 32/64 字节对齐用 **`std::aligned_alloc`**（C++17）、**`posix_memalign`**，或 C++17 起 **`new` 对过对齐类型自动走对齐重载**。FFmpeg 用 **`av_malloc`（32 字节对齐）** + **`av_freep`**。
 - **伪共享（false sharing）**：两个线程各写各的变量，但它们恰好在**同一条 cache line** 上，于是这条 line 在两个核之间反复失效（cache ping-pong），性能可暴跌数倍。解法：用 **`alignas(64)`** 或 padding 把热点变量隔到独立 cache line。
 - **SIMD 对齐**：SSE 寄存器 128 bit、AVX 256 bit、AVX-512 512 bit、ARM NEON 128 bit。**对齐 load（`_mm_load_ps` 要 16 字节对齐）比非对齐 load（`_mm_loadu_ps`）快**，且对齐 load 喂未对齐指针会**段错误**。这是音视频缓冲要对齐的直接原因。
 - **stride ≠ width**：图像每一行末尾常有对齐填充，**一行的字节数（stride/pitch/linesize）通常大于 `width * 每像素字节`**。逐行处理必须按 stride 跳行，绝不能假设 `stride == width * bytesPerPixel`，否则花屏。
-- **裸流解析是对齐 UB 重灾区**：把 `char*` 直接 `reinterpret_cast` 成 `int*` 解引用，可能未对齐 → UB。正确做法是 **`memcpy`** 取出，或 C++20 的 **`std::bit_cast`**（见 [[11-类型转换]]）。
-- **零拷贝**：用 C++20 **`std::span`** 安全地切裸字节流（指针+长度打包成一个对象），避免裸指针配长度到处传；大缓冲共享用引用计数（AVFrame 的 `buf`，见 [[06-智能指针与资源管理]]）。
+- **裸流解析是对齐 UB 重灾区**：把 `char*` 直接 `reinterpret_cast` 成 `int*` 解引用，可能未对齐 → UB。正确做法是 **`memcpy`** 取出，或 C++20 的 **`std::bit_cast`**（见 [11-类型转换](11-类型转换.md)）。
+- **零拷贝**：用 C++20 **`std::span`** 安全地切裸字节流（指针+长度打包成一个对象），避免裸指针配长度到处传；大缓冲共享用引用计数（AVFrame 的 `buf`，见 [06-智能指针与资源管理](06-智能指针与资源管理.md)）。
 
 ---
 
@@ -22,7 +27,7 @@
 
 ### 1. 标量对齐 vs cache line（两个层次别混）
 
-标量对齐（`int` 对齐 4、`double` 对齐 8、结构体 padding）属于**编译期/ABI 层面**，目的是让单次访问不跨越自然边界——基础规则见 [[05-内存管理与对象生命周期]]，这里不重复。
+标量对齐（`int` 对齐 4、`double` 对齐 8、结构体 padding）属于**编译期/ABI 层面**，目的是让单次访问不跨越自然边界——基础规则见 [05-内存管理与对象生命周期](05-内存管理与对象生命周期.md)，这里不重复。
 
 但还有一个更宏观、对性能影响更大的层次：**cache line（缓存行）**。
 
@@ -86,7 +91,7 @@ std::uint8_t* clearedBuffer = static_cast<std::uint8_t*>(av_mallocz(bufferSize))
 av_freep(&sampleBuffer);   // 释放后 sampleBuffer 自动变 nullptr
 ```
 
-`av_freep(&ptr)` 的设计很值得学：它收的是二级指针，释放完顺手把你的指针清零，从源头杜绝悬空指针（对比 [[05-内存管理与对象生命周期]] 里强调的「delete 后手动置 nullptr」，FFmpeg 把这一步封装进了 API）。
+`av_freep(&ptr)` 的设计很值得学：它收的是二级指针，释放完顺手把你的指针清零，从源头杜绝悬空指针（对比 [05-内存管理与对象生命周期](05-内存管理与对象生命周期.md) 里强调的「delete 后手动置 nullptr」，FFmpeg 把这一步封装进了 API）。
 
 > 面试标准回答：「标量对齐是 ABI 层面，让单次访问不跨自然边界；但性能上更关键的是 cache line——CPU 和内存永远以 64 字节为单位搬运。要拿过对齐内存，`malloc` 只保证 16 字节，得用 C++17 的 `std::aligned_alloc`、`posix_memalign`，或者直接用 FFmpeg 的 `av_malloc`，它默认 32 字节对齐正好喂 AVX。释放一定要和分配配对。」
 
@@ -94,7 +99,7 @@ av_freep(&sampleBuffer);   // 释放后 sampleBuffer 自动变 nullptr
 
 ## 二、伪共享（False Sharing）完整剖析
 
-这是高级岗最爱考的「看不见的性能杀手」，[[05-内存管理与对象生命周期]] 一句话带过，这里讲透机制。
+这是高级岗最爱考的「看不见的性能杀手」，[05-内存管理与对象生命周期](05-内存管理与对象生命周期.md) 一句话带过，这里讲透机制。
 
 ### 1. 机制：明明各写各的，为什么互相拖累
 
@@ -152,7 +157,7 @@ struct StatsPadded {
 ### 4. 音视频实战中的伪共享
 
 - **多线程统计计数器**：解码线程数 `decodedFrames`、渲染线程数 `renderedFrames`、丢帧 `droppedFrames` 若塞进同一个 `Stats` 结构且相邻，多线程高频更新就会伪共享。各自 `alignas(64)` 隔离。
-- **SPSC 无锁队列的读写指针**：生产者只写 `writeIndex`、消费者只写 `readIndex`，若两者相邻必然伪共享——生产/消费越快互相拖得越狠。标准做法是把 `readIndex` 和 `writeIndex` 各自对齐到独立 cache line（见 [[03-无锁队列]]）。
+- **SPSC 无锁队列的读写指针**：生产者只写 `writeIndex`、消费者只写 `readIndex`，若两者相邻必然伪共享——生产/消费越快互相拖得越狠。标准做法是把 `readIndex` 和 `writeIndex` 各自对齐到独立 cache line（见 [03-无锁队列](03-无锁队列.md)）。
 - **线程局部累加再汇总**：更彻底的解法是每个线程先在自己的局部变量里累加，最后再合并，从根上避免跨核写同一行。
 
 > 面试标准回答：「伪共享是指两个线程各写各的变量，但这俩变量恰好在同一条 64 字节 cache line 上。因为缓存一致性是按 cache line 为粒度的，一个核写就会让另一个核这条 line 失效，导致 line 在两核之间反复 ping-pong，性能可能掉好几倍。解决办法是用 `alignas(64)` 或 padding 把高频写的变量隔到各自独立的 cache line。最典型的就是无锁队列的读写指针要分开对齐。」
@@ -333,7 +338,7 @@ void parseNalu(std::span<const std::uint8_t> packet) {
 
 ### 2. 引用计数缓冲：AVFrame 的 buf
 
-更彻底的零拷贝是**共享同一块大缓冲、用引用计数管理寿命**。FFmpeg 的 `AVFrame`/`AVPacket` 内部用 `AVBufferRef` 做引用计数：多个 frame 可以引用同一块数据，`av_frame_ref` 增加计数、`av_frame_unref` 减少，归零才真正释放。这和 `std::shared_ptr` 的引用计数思路一致——把「谁还在用这块缓冲」交给计数管理，避免提前释放或重复释放（详见 [[06-智能指针与资源管理]]）。
+更彻底的零拷贝是**共享同一块大缓冲、用引用计数管理寿命**。FFmpeg 的 `AVFrame`/`AVPacket` 内部用 `AVBufferRef` 做引用计数：多个 frame 可以引用同一块数据，`av_frame_ref` 增加计数、`av_frame_unref` 减少，归零才真正释放。这和 `std::shared_ptr` 的引用计数思路一致——把「谁还在用这块缓冲」交给计数管理，避免提前释放或重复释放（详见 [06-智能指针与资源管理](06-智能指针与资源管理.md)）。
 
 ---
 
@@ -351,7 +356,7 @@ int wrong = *reinterpret_cast<int*>(buffer + 1);   // 危险！
 
 ### 2. 裸流解析正确姿势：memcpy 或 std::bit_cast
 
-解析网络包、文件头时要从字节流里「抠」出一个整数/结构体，正确做法是 `memcpy` 到一个对齐好的局部变量——编译器会把这种小 `memcpy` 优化成一条 load，零开销且无对齐 UB（这也是 [[11-类型转换]] 反复强调的「裸流别 `reinterpret_cast`，要 `memcpy`」）：
+解析网络包、文件头时要从字节流里「抠」出一个整数/结构体，正确做法是 `memcpy` 到一个对齐好的局部变量——编译器会把这种小 `memcpy` 优化成一条 load，零开销且无对齐 UB（这也是 [11-类型转换](11-类型转换.md) 反复强调的「裸流别 `reinterpret_cast`，要 `memcpy`」）：
 
 ```cpp
 // ✅ 正确：memcpy 到对齐的局部变量，无 UB，编译器会优化掉拷贝
@@ -396,9 +401,9 @@ void process(float* rawPtr, std::size_t sampleCount) {
 1. **分配阶段**：用 `av_malloc`（32 字节对齐）或 `aligned_alloc` 分配帧/采样缓冲，一次对齐让下游 SIMD 和硬件都满意。
 2. **解码输出**：解码器吐出的帧带 `linesize[]`（stride），**每行末尾有 padding**，处理时按 stride 跳行，绝不用 width 当步长。
 3. **滤镜/混音**：对像素/采样做 SIMD 批处理（音量调整、YUV 转换、缩放），靠对齐 load 跑满；缓冲已对齐，可放心用对齐指令或 `std::assume_aligned`。
-4. **跨线程传递**：解码线程→渲染线程用 SPSC 无锁队列，读写指针各自 `alignas(64)` 防伪共享（见 [[03-无锁队列]]）；统计计数器同样隔离 cache line。
-5. **零拷贝传递**：上层用 `std::span` 切缓冲区段不拷贝，底层大缓冲用 `AVBufferRef` 引用计数共享寿命（见 [[06-智能指针与资源管理]]）。
-6. **裸流解析**：解 NALU/包头时用 `memcpy`/`std::bit_cast` 取整数，不 `reinterpret_cast` 裸指针（见 [[11-类型转换]]）。
+4. **跨线程传递**：解码线程→渲染线程用 SPSC 无锁队列，读写指针各自 `alignas(64)` 防伪共享（见 [03-无锁队列](03-无锁队列.md)）；统计计数器同样隔离 cache line。
+5. **零拷贝传递**：上层用 `std::span` 切缓冲区段不拷贝，底层大缓冲用 `AVBufferRef` 引用计数共享寿命（见 [06-智能指针与资源管理](06-智能指针与资源管理.md)）。
+6. **裸流解析**：解 NALU/包头时用 `memcpy`/`std::bit_cast` 取整数，不 `reinterpret_cast` 裸指针（见 [11-类型转换](11-类型转换.md)）。
 
 ---
 
@@ -409,11 +414,11 @@ void process(float* rawPtr, std::size_t sampleCount) {
 | 用 `malloc` 给 SIMD 缓冲分配内存 | 只保证 16 字节对齐，喂 AVX 对齐指令崩溃 | `av_malloc`/`std::aligned_alloc`/`posix_memalign`（32 字节） |
 | 分配与释放不配对 | `aligned_alloc` 用 `_aligned_free`、`new` 用 `free` → UB | 配对：`free`/`_aligned_free`/`delete` 对应各自分配器 |
 | 多线程相邻变量高频写 | 伪共享，cache line ping-pong，慢数倍 | 热点变量 `alignas(64)` 隔到独立 cache line |
-| 无锁队列读写指针相邻 | 生产/消费互相失效，吞吐暴跌 | 读写指针各自 cache-line 对齐（见 [[03-无锁队列]]） |
+| 无锁队列读写指针相邻 | 生产/消费互相失效，吞吐暴跌 | 读写指针各自 cache-line 对齐（见 [03-无锁队列](03-无锁队列.md)） |
 | 对齐 load 喂未对齐指针 | `_mm_load_ps` 段错误崩溃 | 缓冲先对齐，或退而用 `_mm_loadu_ps` |
 | 假设 `stride == width*bpp` | 把 padding 当像素读，斜向撕裂花屏 | 按 `linesize`/stride 逐行处理，每行只取有效字节 |
 | 整帧 `memcpy(stride*height)` | 源目标 stride 不同就花屏 | 逐行 `memcpy(width*bpp)`，源目标各跳各的 stride |
-| `reinterpret_cast` 裸流解整数 | 未对齐解引用 UB，ARM 上崩溃 | `memcpy` 到对齐局部变量 / `std::bit_cast`（见 [[11-类型转换]]） |
+| `reinterpret_cast` 裸流解整数 | 未对齐解引用 UB，ARM 上崩溃 | `memcpy` 到对齐局部变量 / `std::bit_cast`（见 [11-类型转换](11-类型转换.md)） |
 | `std::assume_aligned` 骗编译器 | 实际未对齐 → UB | 只在确由对齐分配器拿到的指针上用 |
 
 > 面试一句话总结：「内存对齐在音视频里不是抠细节，而是性能和正确性的命门——CPU 按 64 字节 cache line 搬数据，所以多线程高频写的变量要 `alignas(64)` 防伪共享；SIMD 要 16/32 字节对齐才能跑满且不崩，所以帧缓冲一律用 `av_malloc` 对齐到 32 字节；图像有 stride（每行带 padding，大于 width×bpp），处理必须逐行按 stride 跳；解析裸流要 `memcpy`/`bit_cast` 而不是 `reinterpret_cast` 裸指针，否则未对齐解引用是 UB。」

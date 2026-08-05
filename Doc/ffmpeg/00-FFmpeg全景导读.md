@@ -1,4 +1,15 @@
-# FFmpeg 全景导读
+# 00 - FFmpeg 全景导读
+
+## 0. 本篇定位
+
+| 项 | 说明 |
+|---|---|
+| 面试位置 | 总入口：建立 FFmpeg 与音视频工程的全景地图。 |
+| 先背什么 | 能把 demux、decode、frame、filter、encode、mux、protocol 串成一条端到端链路。 |
+| 深入怎么学 | 先读核心问题和全景图，再回到各专题补 API、内存、时间戳和工程坑。 |
+| 关联阅读 | README、01、05、08、24 |
+
+---
 
 > 这是一份"先建地图、再走路"的导读。
 > 目标是让你合上文档时，脑子里有一张 ffmpeg 的全景图、知道自己在哪、下一步往哪走。
@@ -416,7 +427,7 @@ ffmpeg 之所以这么庞大，是因为音视频这一整条链路上要处理�
 | 引用计数与资源生命周期                             | `ffmpeg_resource_lifecycle_notes.md` 整理得很系统        | ✅   |
 | 像素格式与内存布局（YUV/NV12/I420/linesize）       | `pixel_format_memory_layout_guide.md` 覆盖到位         | ✅   |
 | SwsContext 缩放与转换                        | `swscontext_lecture.md` 含硬件帧的讨论                    | ✅   |
-| 音频 PCM / 采样格式 / 重采样                     | `cpp音视频开发音频问题与面试指南.md` 1100+ 行，深度足够                | ✅   |
+| 音频 PCM / 采样格式 / 重采样                     | `04-音频PCM-采样-重采样.md` 已合并音频工程排查、AEC、Jitter Buffer 等内容                | ✅   |
 | H.264 / MP4 / NALU / AVCC vs Annex-B    | 4 份文档（有重复），知识点齐了                                   | ✅   |
 | 码控（Profile / Preset / Tune / CRF / CBR） | `码率-Profile.md` 完整                                 | ✅   |
 | 硬件编解码                                   | `hardware_codec_learning_guide.md` 是路径建议，**没动手实践** | ⚠️  |
@@ -469,3 +480,4 @@ ffmpeg 之所以这么庞大，是因为音视频这一整条链路上要处理�
 10. ffmpeg 在 WebRTC 项目里扮演什么角色？为什么 WebRTC 不能用 ffmpeg 替代？
 
 能流畅回答这 10 题，说明你已经从"知识点拼图"进入"全景认知"阶段。
+

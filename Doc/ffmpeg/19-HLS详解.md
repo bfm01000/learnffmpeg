@@ -1,5 +1,16 @@
 # 19 - HLS 详解（面试导向 + 全景）
 
+## 0. 本篇定位
+
+| 项 | 说明 |
+|---|---|
+| 面试位置 | HLS 分发专题：m3u8、TS/fMP4、切片、自包含、LL-HLS、ABR。 |
+| 先背什么 | 为什么 HLS 延迟高、为什么切片要自包含、ABR 怎么组织、LL-HLS 降低了什么。 |
+| 深入怎么学 | 结合 05 的 SPS/PPS、08 的协议选型和 06 的 GOP/码控理解。 |
+| 关联阅读 | 05、06、08 |
+
+---
+
 > 对应导读第 3.7 节"运输问题"。这是 [08-网络协议与流媒体.md](./08-网络协议与流媒体.md) §6.3 **HLS 那一格的深挖**——专讲"为什么大规模直播分发用 HLS"和"怎么把 HLS 切好、延迟做低"。
 > 前置：编码看 [11-H264与H265详解.md](./11-H264与H265详解.md) / [06-编码参数与码控.md](./06-编码参数与码控.md)，TS 封装看 [05-H264-MP4-NALU.md](./05-H264-MP4-NALU.md) §5.5，协议大局看 [08](./08-网络协议与流媒体.md) §六。
 
@@ -198,7 +209,7 @@ PES (Packetized Elementary Stream) — 音视频原始数据
 
 ### 3.4 自包含切片——HLS 最核心的概念
 
-> 这是面试里 HLS 部分**最高频的追问**，对应 Q3（上面的问答）和 [self-check Q17](../project/WebRTC/03-音视频基础self-check.md#q17-什么是封装格式的自包含和非自包含为什么-hls-切片要自包含)。
+> 这是面试里 HLS 部分**最高频的追问**，对应 Q3（上面的问答）和 self-check Q17（自包含概念；WebRTC 项目入口见 [project/14_WebRTC_Interview_Project](../../project/14_WebRTC_Interview_Project/README.md)）。
 
 #### 定义
 
@@ -502,6 +513,8 @@ segment_100.ts
 - [08-网络协议与流媒体.md](./08-网络协议与流媒体.md) §6.3 — HLS 在协议全景中的定位
 - [05-H264-MP4-NALU.md](./05-H264-MP4-NALU.md) §5.5 — MPEG-TS 188 字节包、PCR 原理
 - [12-RTMP推流详解.md](./12-RTMP推流详解.md) — RTMP 推流端（和 HLS 组成"推流→分发"的常见组合）
-- [project/WebRTC/03-音视频基础self-check.md](../project/WebRTC/03-音视频基础self-check.md#q17) — Q17 自包含概念自检
+- [project/14_WebRTC_Interview_Project/README.md](../../project/14_WebRTC_Interview_Project/README.md) — WebRTC 项目入口；HLS 自包含概念可在本文 Q3/Q17 自检 — Q17 自包含概念自检
 - [Apple HLS Specification](https://developer.apple.com/documentation/http-live-streaming) — 官方协议规范
 - [RFC 8216](https://datatracker.ietf.org/doc/html/rfc8216) — HLS 的 IETF 标准化文档
+
+

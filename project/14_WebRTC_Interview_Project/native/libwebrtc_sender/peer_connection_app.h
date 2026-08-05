@@ -18,6 +18,7 @@ class TaskQueueFactory;
 
 struct VideoSourceConfig {
   std::string source = "synthetic";
+  std::string file;
   int width = 640;
   int height = 480;
   int fps = 30;

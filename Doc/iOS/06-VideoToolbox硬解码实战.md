@@ -1,5 +1,10 @@
 # VideoToolbox 硬解码实战：从 H.264 比特流到 CVPixelBuffer
 
+## 0. 本篇定位
+
+- 面试复习：先掌握 `VTDecompressionSession`、format description、Annex-B 到 AVCC、SPS/PPS 更新和解码失败恢复。
+- 深入学习：重点看输出 `CVPixelBuffer` 的生命周期、`IOSurface` 后端、解码会话重建和渲染衔接。
+- 工程落点：硬解码最好直接输出可被 Metal/显示层消费的 buffer，CPU 读回只作为特殊算法或调试路径。
 > **适用方向**：iOS 移动端音视频 SDK 开发，播放器/RTC 拉流方向
 > **前置知识**：H.264 NALU 基础、CMSampleBuffer / CVPixelBuffer / CMVideoFormatDescription
 > **难度**：⭐⭐⭐⭐（1-5 星）
@@ -663,12 +668,10 @@ displayLayer.videoGravity = AVLayerVideoGravityResizeAspect;
 
 ---
 
-## 🎯 一句话总结
-
+## 一句话总结
 > iOS 解码 = SPS/PPS → CMVideoFormatDescription（硬门槛） → VTDecompressionSession（不复用） → Annex-B→AVCC（格式转换） → DecodeFrame（异步） → CVPixelBuffer（IOSurface） → Metal/DisplayLayer。坑集中在格式转换、会话复用、和销毁死锁三点。
 
-## 🔗 关联文档
-
+## 关联文档
 - [[../ffmpeg/15-iOS硬件编解码]] — VT 编解码的全文深讲
 - [[05-VideoToolbox硬编码实战]] — 编码端
 - [[04-Metal渲染与零拷贝详解]] — 解码输出后的渲染

@@ -1,5 +1,10 @@
 # iOS 音视频开发全景导读
 
+## 0. 本篇定位
+
+- 面试复习：先建立 iOS 媒体栈总图，分清 `AVFoundation`、`VideoToolbox`、`CoreVideo`、`Metal`、`AudioUnit` 各自的位置。
+- 深入学习：重点看采集、编码、解码、格式转换、渲染和零拷贝如何串成实时管线。
+- 中高级加分点：能把 iOS 的 `CVPixelBuffer`/`IOSurface` 和 Android 的 `Surface`/`AHardwareBuffer` 做横向对比。
 > **适用方向**：iOS 移动端音视频 SDK 开发（采集→编码→推流 / 拉流→解码→渲染 全链路）
 > **前置知识**：有 Android 音视频开发经验（MediaCodec / Camera2 / OpenGL ES），需要补齐 iOS 端对应技术栈
 > **难度分层**：中级（必须掌握）标 🟢 / 高级（进阶加分）标 🟡 / 专家深水区标 🔵
@@ -315,12 +320,10 @@ iOS 音视频开发
 
 ---
 
-## 🎯 一句话总结
-
+## 一句话总结
 > iOS 音视频开发就是读懂三层架构：AVFoundation 省心但黑盒，VideoToolbox/AudioToolbox/CoreMedia 精细但繁琐，Metal 是唯一 GPU 门票——好在全家桶行为一致，没有 Android 的碎片化噩梦。
 
-## 🔗 关联文档
-
+## 关联文档
 ### 基础入门
 - [[../ffmpeg/00-FFmpeg全景导读]] — 音视频通用地基（Android/iOS 通用）
 - [[../OC/【重点】OC面试高频考点与标准回答大全]] — Objective-C 语言基础（iOS 开发的前提）

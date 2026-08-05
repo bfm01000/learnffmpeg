@@ -1,5 +1,10 @@
 # OpenGL ES 渲染与 Surface 详解：从 SurfaceTexture 到屏幕
 
+## 0. 本篇定位
+
+- 面试复习：先能说清 `Surface`、`SurfaceTexture`、`OES Texture`、`EGLImage`、`FBO` 各自负责什么，以及 `updateTexImage()` 为什么不是大拷贝。
+- 深入学习：重点看 BufferQueue、transform matrix、GPU 同步、`glReadPixels` 和双线程渲染架构。
+- 工程落点：渲染链路的目标不是“能画出来”，而是在预览、滤镜、编码、截图之间控制拷贝、同步和延迟。
 > **适用方向**：Android 视频渲染/滤镜/后处理
 > **前置知识**：OpenGL ES 基础（shader / 纹理 / FBO），Surface / SurfaceTexture 概念
 > **难度**：⭐⭐⭐（1-5 星）
@@ -442,12 +447,10 @@ tiled:   [TileA: 00 01/10 11] [TileB: 02 03/12 13]  ← GPU/VPU 喜欢（空间�
 
 ---
 
-## 🎯 一句话总结
-
+## 一句话总结
 > Android 渲染 = Surface(外部帧源) → SurfaceTexture(OES 纹理桥梁) → `samplerExternalOES` shader → YUV→RGB → GLSurfaceView/TextureView。OES 纹理的限制（必须用 samplerExternalOES、无 mipmap）+ SurfaceTexture 的 transform matrix 是最容易忽略的细节。
 
-## 🔗 关联文档
-
+## 关联文档
 - [[02-MediaCodec硬编码实战]] — Surface 输入零拷贝编码 + AHardwareBuffer 附录
 - [[03-MediaCodec硬解码实战]] — Surface 输出零拷贝解码 + 硬解 AVFrame 原理
 - [[06-端到端采集编码推流管线]] — 跨平台 RHI 架构 + iOS vs Android 零拷贝对比

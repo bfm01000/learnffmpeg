@@ -1,5 +1,16 @@
 # 14 - Android 硬件编解码深入（MediaCodec / AMediaCodec）
 
+## 0. 本篇定位
+
+| 项 | 说明 |
+|---|---|
+| 面试位置 | Android 硬件编解码专题：MediaCodec 状态机、CSD、颜色格式、Surface 零拷贝。 |
+| 先背什么 | OMX/Codec2、硬软 codec 区分、CSD、stride/color format、Surface 输出是重点。 |
+| 深入怎么学 | 从 buffer 模式和 Surface 模式两条链路理解解码、编码、渲染。 |
+| 关联阅读 | 10、25 |
+
+---
+
 > 这是 [10-移动端硬件编解码.md](./10-移动端硬件编解码.md) 的 **Android 专题深挖篇**。10 是移动端总览（Android + iOS 一篇讲完），本篇把 Android 这一侧拆开、讲透、做成面试导向——目标是读完能应对面试里关于 Android 硬编硬解的绝大部分问题。
 > 本篇覆盖：MediaCodec 在 Android 媒体栈里的位置、OMX → Codec2 演进、硬件 codec vs 软件 codec 怎么区分与选择、Java `MediaCodec` vs NDK `AMediaCodec`、缓冲区队列模型与生命周期状态机、CSD（SPS/PPS）、颜色格式坑、Surface 零拷贝、编码参数与运行时控制、FFmpeg 在 Android 的支持边界、和 iOS / NVENC 的横向对比、Android 特有陷阱、面试高频问答、学习路径。
 > 前置：先读 [07-硬件编解码.md](./07-硬件编解码.md) 建立"硬件帧 vs 软件帧"的核心直觉；本篇频繁引用 [05-H264-MP4-NALU.md](./05-H264-MP4-NALU.md) 的 Annex-B / SPS/PPS、[02-像素格式与内存布局.md](./02-像素格式与内存布局.md) 的 NV12 / stride、[06-编码参数与码控.md](./06-编码参数与码控.md) 的 GOP / CBR / 低延迟。零拷贝底层原理在 [10 §四点五](./10-移动端硬件编解码.md#四点五ios-与-android-的零拷贝核心考点) 有总览，本篇 §7.6 做了 gralloc/dma-buf/fence 三层协作的专题深挖（与 UMA 慢因、iOS IOSurface 的对比仍在 10）。
@@ -1523,3 +1534,5 @@ MediaExtractor 拆 MP4 ──► csd ──► MediaCodec 配 Surface 解码显�
 ---
 
 > 一句话总结:**`MediaCodec` 是 Android 统一编解码门面,底下经 OMX(老)/Codec2(新)派给厂商硬件单元或软件实现;用好它的关键是握住"缓冲区队列 + 生命周期状态机 + releaseOutputBuffer 铁律"的心智模型,优先 Surface 零拷贝避开颜色格式坑,记住 Android 吐 Annex-B、FFmpeg 在 Android 解码成熟而编码弱(6.0+ 有 wrapper 但生产多直调系统 API)——硬编实务以直调为准。**
+
+

@@ -1,5 +1,10 @@
 # AudioUnit 与 iOS 音频处理：面试速记与原理详解
 
+## 0. 本篇定位
+
+- 面试复习：先掌握 RemoteIO、bus/scope、ASBD、音频回调线程和 `AVAudioSession` 的关系。
+- 深入学习：重点看实时音频线程不能阻塞、不能频繁分配内存，以及 RTC 场景下回声消除和路由变化处理。
+- 工程落点：iOS 音频质量靠线程纪律、buffer 尺寸、session 策略和时钟同步共同保证。
 > **适用方向**：iOS 移动端音视频 SDK 开发（实时音频采集/播放方向）
 > **前置知识**：PCM 音频基础（采样率、位深、声道），了解 Android AudioTrack/AudioRecord 最好
 > **难度**：⭐⭐⭐（1-5 星）
@@ -369,12 +374,10 @@ static OSStatus RenderCallback(void *inRefCon,
 
 ---
 
-## 🎯 一句话总结
-
+## 一句话总结
 > iOS 实时音频 = AudioUnit RemoteIO 双向模型 + ASBD 配好 LinearPCM/16bit + 回调里只做 ring buffer 搬运不阻塞 + AudioSession 管好中断和路由——和 Android 的 AudioRecord/AudioTrack 思路一样，但 API 更"反直觉"。
 
-## 🔗 关联文档
-
+## 关联文档
 - [[00-iOS音视频开发全景导读]] — iOS 媒体栈全家福
 - [[01-AVFoundation采集详解]] — 视频采集（和音频配合做音视频同步）
 - [[../ffmpeg/00-FFmpeg全景导读]] §6.4 — Planar vs Packed（ASBD 里的 interleaved vs non-interleaved）

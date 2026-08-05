@@ -1,5 +1,10 @@
 # IOSurface 深入详解（面试向）
 
+## 0. 本篇定位
+
+- 面试复习：先能解释 IOSurface 是跨框架共享图像内存的底座，`CVPixelBuffer`、Metal、VideoToolbox 可以通过它共享同一份底层资源。
+- 深入学习：重点看 plane、stride、引用生命周期、跨进程/跨框架共享和缓存一致性。
+- 工程落点：这篇偏底层机制，和 `10-iOS零拷贝深入详解.md` 互补：10 讲链路，11 讲底座。
 > 适用方向：iOS/macOS 音视频 SDK 开发、跨进程渲染、零拷贝管线
 > 前置：了解 CVPixelBuffer、Metal/OpenGL 基础、虚拟内存基本概念
 > 难度：⭐⭐⭐⭐⭐

@@ -1,5 +1,10 @@
 # GPU同步策略说明：`glFinish` vs `glFenceSync + glWaitSync`
 
+## 0. 本篇定位
+
+- 面试复习：先掌握 `glFinish`、`glFlush`、`glFenceSync`、`glWaitSync` 的区别，以及为什么没有 CPU 拷贝也可能被同步卡住。
+- 深入学习：重点看跨上下文、渲染到编码、双线程共享上下文和 triple buffering 的同步模型。
+- 工程落点：GPU 同步优化要用指标说话，区分 CPU 阻塞、GPU 排队、BufferQueue 背压和编码器消费慢。
 本文面向当前预览渲染链路（`AndroidTextureRender::ReadFrame`）中的两种同步流程，解释它们的差异、适用场景和选型建议。
 
 ---

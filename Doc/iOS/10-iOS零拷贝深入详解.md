@@ -1,5 +1,10 @@
 # iOS 零拷贝深入详解（面试向）
 
+## 0. 本篇定位
+
+- 面试复习：先掌握 `CVPixelBuffer`、`IOSurface`、`CVMetalTextureCache`、`LockBaseAddress` 的边界，以及什么情况会破坏零拷贝。
+- 深入学习：重点看 NV12 plane 映射、纹理缓存生命周期、颜色空间、跨 Android 对比和零拷贝验证方法。
+- 工程落点：这篇偏实战链路，适合回答“采集/解码帧如何不经过 CPU 进入 Metal、滤镜、编码或显示”。
 > 适用方向：iOS 音视频 SDK 开发、渲染/编解码/推流链路优化
 > 前置：了解 CVPixelBuffer、Metal/OpenGL 基础概念
 > 难度：⭐⭐⭐⭐⭐

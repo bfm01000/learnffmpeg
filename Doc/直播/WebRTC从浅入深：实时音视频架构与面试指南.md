@@ -1,5 +1,10 @@
 # WebRTC 从浅入深：实时音视频架构与面试指南
 
+## 0. 本篇定位
+
+- 面试复习：先掌握 WebRTC 和 RTMP/HLS/HTTP-FLV 的本质区别，能说清 SDP、ICE、STUN/TURN、DTLS-SRTP、RTP/RTCP 和 SFU。
+- 深入学习：重点看 JitterBuffer、NACK、FEC、PLI/FIR、GCC、Simulcast/SVC、getStats 和弱网定位。
+- 职责边界：这篇是知识体系入口；可运行项目和开发记录回到 `../../project/14_WebRTC_Interview_Project/`。
 这篇文档面向 C++ 高级音视频开发面试和工程理解，不把 WebRTC 当成一个 API 来背，而是把它当成一套完整的实时音视频系统来拆。
 
 你可以先记住一句话：

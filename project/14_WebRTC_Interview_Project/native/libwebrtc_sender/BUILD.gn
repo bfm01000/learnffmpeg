@@ -26,6 +26,7 @@ rtc_executable("low_latency_sender") {
     "//api/environment",
     "//api/environment:environment_factory",
     "//api/video:video_frame",
+    "//api/video:video_broadcaster",
     "//api/video_codecs:video_decoder_factory_template",
     "//api/video_codecs:video_decoder_factory_template_dav1d_adapter",
     "//api/video_codecs:video_decoder_factory_template_libvpx_vp8_adapter",

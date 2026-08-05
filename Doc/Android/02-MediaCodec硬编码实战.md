@@ -1,5 +1,10 @@
 # MediaCodec 硬编码实战：从 YUV 到 H.264 比特流
 
+## 0. 本篇定位
+
+- 面试复习：先能讲清 `ByteBuffer` 输入和 `Surface` 输入的差异，`INFO_OUTPUT_FORMAT_CHANGED`、SPS/PPS、关键帧和动态码率怎么处理。
+- 深入学习：重点看线性内存、tiled layout、`AHardwareBuffer`/`GraphicBuffer` 与编码器之间的关系，理解为什么 Surface 输入更适合实时视频。
+- 工程落点：实时推流优先选择 Camera/GL 写 Surface，再由 MediaCodec 编码，除非确实需要 CPU 算法逐帧处理。
 > **适用方向**：Android 移动端音视频 SDK 开发，直播推流/RTC 方向
 > **前置知识**：MediaCodec 基础（见 [[../ffmpeg/14-Android硬件编解码]]），YUV 像素格式
 > **难度**：⭐⭐⭐（1-5 星）
@@ -536,12 +541,10 @@ csd-0/csd-1 是**解码器**的参数——configure 时告诉解码器 SPS/PPS 
 
 ---
 
-## 🎯 一句话总结
-
+## 一句话总结
 > Android MediaCodec 编码 = COLOR_FormatYUV420Flexible + BITRATE_MODE_CBR + dequeue/queue 循环 + 输出已是 Annex-B（和 iOS 相反，无需格式转换）。Surface 输入零拷贝更优。
 
-## 🔗 关联文档
-
+## 关联文档
 - [[../ffmpeg/14-Android硬件编解码]] — MediaCodec 全文深讲
 - [[01-Camera2采集详解]] — 编码输入的 YUV 来源
 - [[04-OpenGLES渲染与Surface详解]] — Surface 输入零拷贝编码

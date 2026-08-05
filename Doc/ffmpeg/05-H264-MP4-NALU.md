@@ -1,5 +1,16 @@
 # 05 - H.264、MP4、NALU 与 AVCC / Annex-B
 
+## 0. 本篇定位
+
+| 项 | 说明 |
+|---|---|
+| 面试位置 | 编码码流与容器边界：H.264、MP4、NALU、SPS/PPS、bitstream filter。 |
+| 先背什么 | MP4 里的 H.264 为什么不能直接按 00 00 01 扫，AVCC 和 Annex-B 怎么互转。 |
+| 深入怎么学 | 结合 PTS/DTS、GOP、IDR、SPS/PPS 注入和推流/切片场景理解。 |
+| 关联阅读 | 06、11、12、19 |
+
+---
+
 > 对应导读第 3.1 节"压缩问题"、第 3.2 节"组织问题"、第 6.5 节"AVCC vs Annex-B"。
 > 这一篇覆盖：编码层 vs 容器层的差别、H.264 的 NALU 结构、MP4 怎么装 H.264、AVCC 和 Annex-B 两种打包方式、I/P/B 帧 + GOP、PTS / DTS、SPS / PPS 补齐、AAC 的 ADTS、`-c copy` 的本质。
 > 这是面试**绝对高频考点**，几乎每个音视频岗位都会问到。
@@ -763,3 +774,39 @@ ffprobe -hide_banner -show_frames -select_streams v:0 input.mp4 | head
 9. GOP 长度对首屏秒开和压缩率分别有什么影响？
 10. AAC 在 MP4 里和在 TS 直播流里的格式分别是什么？为什么？
 11. `ffmpeg -c copy` 到底做了什么？什么时候不能用？
+---
+
+## 十一、SPS 字节级解析：从码流里读出宽高
+
+SPS（Sequence Parameter Set）保存的是一段 H.264 序列级参数，例如 profile、level、编码宽高、裁剪信息、VUI 等。面试不一定要求手写完整解析器，但要知道“宽高不是只看容器，也能从 SPS 里读”。
+
+简化流程：
+
+```text
+Annex-B / AVCC 中拿到 SPS NALU
+  -> 去掉 start code 或 length prefix
+  -> 去掉 NALU header
+  -> 处理 emulation prevention byte：00 00 03 -> 00 00
+  -> 按 bit 读 profile_idc / level_idc / seq_parameter_set_id
+  -> 读 pic_width_in_mbs_minus1 / pic_height_in_map_units_minus1
+  -> 结合 frame_mbs_only_flag 和 crop 计算真实宽高
+```
+
+核心公式：
+
+```text
+coded_width  = (pic_width_in_mbs_minus1 + 1) * 16
+coded_height = (pic_height_in_map_units_minus1 + 1) * 16 * (2 - frame_mbs_only_flag)
+visible_width/height = coded size - crop offsets
+```
+
+常见坑：
+
+| 坑 | 说明 |
+|---|---|
+| 忘记去 `00 00 03` | bit 读取会错位，后面所有字段都错 |
+| 把 coded size 当显示尺寸 | H.264 按宏块对齐，真实显示尺寸可能靠 crop 修正 |
+| 只相信容器宽高 | 裸流、推流、硬解初始化时经常要靠 SPS/PPS |
+| AVCC/Annex-B 混淆 | MP4 里 SPS/PPS 常在 extradata，直播流常在 IDR 前重复出现 |
+
+完整手写解析不如理解链路重要：SPS 是硬解初始化、推流 sequence header、播放器首帧黑屏排查的关键参数来源。

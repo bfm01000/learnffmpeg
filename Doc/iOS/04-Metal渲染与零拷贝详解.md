@@ -1,5 +1,10 @@
 # iOS Metal 渲染与零拷贝详解：从 CVPixelBuffer 到屏幕
 
+## 0. 本篇定位
+
+- 面试复习：先掌握 `CVMetalTextureCache` 如何把 `CVPixelBuffer` 的 Y/UV plane 映射成 Metal 纹理，以及 NV12 到 RGB 的 shader 路径。
+- 深入学习：重点看 command buffer、inflight 控制、颜色矩阵、纹理缓存生命周期和 `IOSurface` 后端条件。
+- 工程落点：Metal 渲染的关键不是画三角形，而是把采集/解码输出不落 CPU 地接入 GPU 处理和显示。
 > **适用方向**：iOS 移动端音视频 SDK 开发，视频渲染/预览/后处理方向
 > **前置知识**：Metal 基础（MTLDevice / MTLCommandQueue / MTLTexture），了解 CVPixelBuffer 和 IOSurface 的基本概念
 > **难度**：⭐⭐⭐⭐（1-5 星）
@@ -713,12 +718,10 @@ constant float2x2 rotateMatrix = float2x2(cosAngle, -sinAngle, sinAngle, cosAngl
 
 ---
 
-## 🎯 一句话总结
-
+## 一句话总结
 > iOS Metal 渲染的核心是 CVMetalTextureCache——它把 CVPixelBuffer 底层的 IOSurface 零拷贝 alias 成 Metal 纹理，NV12 两个平面分别映射为 R8Unorm 和 RG8Unorm，在 shader 里用 YUV→RGB 矩阵合成输出。全程数据不离开 GPU 显存、CPU 零参与。
 
-## 🔗 关联文档
-
+## 关联文档
 - [[00-iOS音视频开发全景导读]] — iOS 媒体栈全景图
 - [[01-AVFoundation采集详解]] — 拿到 CVPixelBuffer 的来源
 - [[../ffmpeg/15-iOS硬件编解码]] — 编解码产出的 CVPixelBuffer

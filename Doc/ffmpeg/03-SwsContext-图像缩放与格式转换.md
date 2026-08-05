@@ -1,5 +1,16 @@
 # 03 - SwsContext：图像缩放与格式转换
 
+## 0. 本篇定位
+
+| 项 | 说明 |
+|---|---|
+| 面试位置 | 视频 CPU 加工层：缩放、像素格式转换和 linesize 配合。 |
+| 先背什么 | 重点回答 sws_scale 的输入输出、SwsContext 复用、为什么不能直接处理硬件帧。 |
+| 深入怎么学 | 结合 02 的内存布局和 07 的硬件帧边界看。 |
+| 关联阅读 | 02、07、13 |
+
+---
+
 > 对应导读第 3.6 节"加工问题"。
 > 这一篇覆盖 `libswscale` 模块的核心 API（`sws_getContext` / `sws_scale`）、典型使用流程、性能要点。
 > 硬件帧的处理放在 [07-硬件编解码.md](./07-硬件编解码.md)。
@@ -309,3 +320,5 @@ sws_setColorspaceDetails(swsCtx, invTable, srcRange, table, dstRange,
 - 多线程场景下，多个解码线程共用一个 `SwsContext` 安全吗？（提示：不安全）
 - 输入流的分辨率中途变化怎么办？
 - 保存 PPM 和保存 JPEG 在使用 `SwsContext` 上有什么不同？
+
+

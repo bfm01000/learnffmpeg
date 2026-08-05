@@ -1,5 +1,16 @@
 # 04 - 音频 PCM、采样格式与重采样
 
+## 0. 本篇定位
+
+| 项 | 说明 |
+|---|---|
+| 面试位置 | 音频原始数据地基：PCM 五参数、采样格式、声道布局、重采样。 |
+| 先背什么 | AAC 解码后 FLTP 为什么不能直接播放、重采样要改哪些参数、音频 PTS 怎么算。 |
+| 深入怎么学 | 把采样率、frame_size、sample_fmt、channel_layout、SwrContext 和同步串起来。 |
+| 关联阅读 | 18、24、音频专项 |
+
+---
+
 > 对应导读第 3.3 节"解释问题"、第 3.4 节"节奏问题"、第 6.4 节"Planar vs Packed"。
 > 这一篇覆盖 PCM 的全部概念栈：什么是 PCM、采样率、位深、声道布局、Planar/Packed、平台格式偏好、重采样（SwrContext）、音频帧时长计算、音视频同步、缓冲区、AAC 编码、采集端 3A 处理、网络抖动。
 > 这是 ffmpeg 笔记里篇幅最长的一篇，因为音频比视频更容易在底层翻车：只要五个参数里有一个错，立刻就是杂音、爆音、卡顿、变速、不同步。
@@ -901,3 +912,93 @@ pts -> seconds :  seconds = pts × av_q2d(time_base)
 | Jitter Buffer / PLC（弱网音频） | Q8.6、Q9.3；本节 §十四 |
 | Seek 之后为什么容易音画不同步？要清什么？ | Q4.13 |
 | 听到杂音 / 变速 / 断续 / 不同步怎么反查？ | Q4.15 + §十五 |
+---
+
+## 十六、音频工程排查与网络音频补充
+
+> 本节由原 `cpp音视频开发音频问题与面试指南.md` 合并而来。基础概念仍以前面 PCM/采样/重采样章节为主；这里补面试里更常追问的工程排查和网络音频问题。
+
+### 16.1 播放缓冲区：underrun 和 overrun
+
+音频播放不是“解出一帧就立刻播放”，而是解码线程、重采样线程和音频设备回调之间通过缓冲区衔接。
+
+| 现象 | 含义 | 常见原因 | 处理方向 |
+|---|---|---|---|
+| underrun | 设备要数据时缓冲区空了 | 解码慢、重采样慢、锁竞争、网络抖动 | 增大缓冲、降低回调工作量、提前预缓冲 |
+| overrun | 生产太快，缓冲区堆积 | 消费慢、播放暂停未控流、时间戳异常 | 限制队列长度、丢弃过期数据、按时钟消费 |
+
+播放回调里尽量只做“取数据 + 拷贝到设备 buffer”，不要做解码、重采样、磁盘 IO、网络 IO 或复杂加锁。否则回调一抖，听感上就是爆音、断续、卡顿。
+
+### 16.2 常见音频故障速查
+
+| 现象 | 优先排查 |
+|---|---|
+| 完全没声音 | 采样格式/声道布局是否匹配、设备是否启动、音量是否为 0、PTS 是否导致一直等待 |
+| 刺耳杂音 | 把 `FLTP` 当 `S16`、planar 当 packed、采样位深解释错、buffer size 算错 |
+| 声音变快/变慢 | 采样率解释错，44100 当 48000 播，或 PTS 推进公式错 |
+| 声音断断续续 | underrun、回调阻塞、网络 jitter、解码/重采样线程供给不足 |
+| 左右声道反了 | channel layout 和实际数据顺序不一致，downmix/upmix 配置错 |
+| 音量忽大忽小 | 削波、归一化/AGC 配置不当、不同源混音前未统一幅度 |
+
+### 16.3 AEC / NS / AGC：采集场景的三件套
+
+| 模块 | 解决什么 | 面试要点 |
+|---|---|---|
+| AEC | 回声消除 | 扬声器播放信号会被麦克风再次采到，需要用远端参考信号估计并抵消回声 |
+| NS | 噪声抑制 | 处理风扇、键盘、环境底噪，通常和语音活动检测配合 |
+| AGC | 自动增益控制 | 让人声响度更稳定，但过强会带来噪声泵动和音量忽大忽小 |
+
+面试里不要只背缩写。要能讲出回声来源：远端声音从扬声器出来，被本地麦克风采集后又发回远端，远端就听到自己声音。AEC 的关键是“参考信号”和“时延对齐”，不是简单降噪。
+
+### 16.4 Jitter Buffer 与 PLC
+
+网络音频不是匀速到达的。Jitter Buffer 的作用是在延迟和连续性之间折中：缓存少，延迟低但容易断；缓存多，稳但延迟高。
+
+| 概念 | 说明 |
+|---|---|
+| jitter | 包到达间隔的抖动，不等于网络平均延迟 |
+| jitter buffer | 把不均匀到达的包整理成稳定播放节奏 |
+| PLC | Packet Loss Concealment，丢包隐藏，用预测/重复/生成的方式填补短时丢包 |
+
+实时通话里，Opus + Jitter Buffer + PLC 是常见组合。FFmpeg 更擅长编解码和封装；RTC 里的抖动缓冲、NACK/FEC/PLC、AEC 通常由 WebRTC 或自研实时音频引擎处理。
+
+### 16.5 C++ 音频模块架构建议
+
+一个比较稳的播放器/SDK 音频链路可以拆成：
+
+```text
+Demux/Network
+  -> Audio Decode Thread
+  -> Resample / Format Convert
+  -> Audio FIFO / RingBuffer
+  -> Device Callback
+  -> Audio Clock
+```
+
+工程建议：
+
+- 音频参数集中管理：`sample_rate`、`sample_fmt`、`channel_layout`、`frame_size`、`time_base` 不要散落在代码各处。
+- FFmpeg 对象用 RAII 包一层，避免异常路径泄漏。
+- 日志至少打印输入/输出采样率、格式、声道布局、每帧 `nb_samples`、PTS、缓冲区水位。
+- seek / pause / flush 时同时清解码器、重采样器延迟、FIFO 和音频时钟。
+
+### 16.6 用 ffplay 验证裸 PCM
+
+排查音频问题时，先把重采样后的 PCM dump 出来，用 `ffplay` 验证格式解释是否正确：
+
+```bash
+ffplay -f s16le -ar 48000 -ac 2 out.pcm
+```
+
+如果 `ffplay` 播放正常，问题多半在设备回调、缓冲区或同步；如果 `ffplay` 也杂音，优先查采样格式、声道、采样率和 packed/planar。
+
+### 16.7 核心公式
+
+```text
+bytes_per_sample = av_get_bytes_per_sample(sample_fmt)
+bytes_per_frame  = nb_samples * channels * bytes_per_sample
+duration_seconds = nb_samples / sample_rate
+pts_next         = pts_current + nb_samples   // time_base = 1/sample_rate 时
+```
+
+注意：planar 格式下每个声道一个平面，`linesize` 通常表示单个平面的字节数；packed 格式下所有声道交错在同一平面。

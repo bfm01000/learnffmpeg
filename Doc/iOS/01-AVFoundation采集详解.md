@@ -1,5 +1,10 @@
 # AVFoundation 视频采集详解：面试速记与原理详解
 
+## 0. 本篇定位
+
+- 面试复习：先掌握 `AVCaptureSession`、input、output、preset、activeFormat、回调队列和前后摄像头切换。
+- 深入学习：重点看 `CMSampleBuffer`、`CVPixelBuffer`、丢帧策略、曝光/对焦控制和采集线程约束。
+- 工程落点：采集输出最好直接进入 `CVPixelBuffer`/Metal/VideoToolbox 链路，避免无意义的 CPU 格式转换。
 > **适用方向**：iOS 移动端音视频 SDK 开发，特别是**视频拍摄/直播采集**方向
 > **前置知识**：了解 iOS 媒体栈三层架构（见 [[00-iOS音视频开发全景导读]]），最好有 Android Camera2 经验
 > **难度**：⭐⭐⭐（1-5 星）
@@ -479,12 +484,10 @@ if (_currentCamera.hasTorch && _currentCamera.torchActive) {
 
 ---
 
-## 🎯 一句话总结
-
+## 一句话总结
 > iOS 视频采集就是把 AVCaptureDevice（摄像头）和 AVCaptureVideoDataOutput（数据出口）挂到 AVCaptureSession 上，startRunning 后你就在回调里收 NV12 的 CVPixelBuffer——核心原则是回调不阻塞、数据不在 CPU 上读、切换用 beginConfiguration 不闪屏。
 
-## 🔗 关联文档
-
+## 关联文档
 - [[00-iOS音视频开发全景导读]] — 整个 iOS 媒体栈全景图
 - [[../ffmpeg/15-iOS硬件编解码]] — VideoToolbox：拿到 CVPixelBuffer 后怎么编码
 - [[02-AudioUnit与音频处理详解]] — iOS 音频采集/播放
