@@ -76,6 +76,103 @@
 
 ---
 
+### 代码展示
+
+#### select
+```cpp
+while (running) {
+
+    fd_set readfds;
+    FD_ZERO(&readfds);
+
+    FD_SET(cameraFd, &readfds);
+    FD_SET(socketFd, &readfds);
+
+    int maxFd = std::max(cameraFd, socketFd);
+
+    int ret = select(
+        maxFd + 1,
+        &readfds,
+        nullptr,
+        nullptr,
+        nullptr);
+
+    if (ret <= 0)
+        continue;
+
+    if (FD_ISSET(cameraFd, &readfds)) {
+        // Camera Ready
+    }
+
+    if (FD_ISSET(socketFd, &readfds)) {
+        // Socket Ready
+    }
+}
+```
+
+#### poll
+```cpp
+pollfd fds[2];
+
+fds[0].fd = cameraFd;
+fds[0].events = POLLIN;
+
+fds[1].fd = socketFd;
+fds[1].events = POLLIN;
+
+while (running) {
+
+    int ret = poll(fds, 2, -1);
+
+    if (ret <= 0)
+        continue;
+
+    if (fds[0].revents & POLLIN) {
+        // Camera Ready
+    }
+
+    if (fds[1].revents & POLLIN) {
+        // Socket Ready
+    }
+}
+```
+#### epoll
+```cpp
+int epfd = epoll_create1(0);
+
+epoll_event ev{};
+
+ev.events = EPOLLIN;
+
+ev.data.fd = cameraFd;
+epoll_ctl(epfd, EPOLL_CTL_ADD, cameraFd, &ev);
+
+ev.data.fd = socketFd;
+epoll_ctl(epfd, EPOLL_CTL_ADD, socketFd, &ev);
+
+epoll_event events[10];
+
+while (running) {
+
+    int ret = epoll_wait(
+        epfd,
+        events,
+        10,
+        -1);
+
+    for (int i = 0; i < ret; i++) {
+
+        if (events[i].data.fd == cameraFd) {
+            // Camera Ready
+        }
+
+        if (events[i].data.fd == socketFd) {
+            // Socket Ready
+        }
+    }
+}
+```
+
 #### 必考题：epoll 的 LT 和 ET 模式区别？（高频深水区）
 
 **🗣️ 面试标准回答：**
